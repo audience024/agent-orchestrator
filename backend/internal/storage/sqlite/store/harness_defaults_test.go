@@ -46,3 +46,45 @@ func TestHarnessDefaultsPersistIndependentlyAndReset(t *testing.T) {
 		t.Fatal("harness defaults changed unrelated settings")
 	}
 }
+
+func TestHarnessDefaultsPersistHiddenWithoutDisabledModelsAndReset(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Hidden-only entry must persist rather than being removed by IsZero.
+	if err := s.SetHarnessDefault(ctx, domain.HarnessPi, domain.HarnessDefault{Hidden: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.GetAppSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := saved.HarnessDefaults["pi"]
+	if !ok || !got.Hidden || len(got.DisabledModels) != 0 {
+		t.Fatalf("hidden-only entry = %+v (present=%v)", got, ok)
+	}
+
+	// Combining Hidden and DisabledModels persists both.
+	if err := s.SetHarnessDefault(ctx, domain.HarnessPi, domain.HarnessDefault{DisabledModels: []string{"m1"}, Hidden: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	combined, err := s.GetAppSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := combined.HarnessDefaults["pi"]; !got.Hidden || !slices.Equal(got.DisabledModels, []string{"m1"}) {
+		t.Fatalf("combined entry = %+v", got)
+	}
+
+	// Clearing both removes the key.
+	if err := s.SetHarnessDefault(ctx, domain.HarnessPi, domain.HarnessDefault{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := s.GetAppSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := cleared.HarnessDefaults["pi"]; exists {
+		t.Fatalf("zero entry should be removed, got %+v", cleared.HarnessDefaults)
+	}
+}

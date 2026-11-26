@@ -5421,5 +5421,11 @@
 	"backgroundTasks.stale": "veraltet",
 	"backgroundTasks.kind.shell": "Shell",
 	"backgroundTasks.kind.other": "Hintergrundaufgabe",
-	"backgroundTasks.state.failed": "Fehlgeschlagen"
+	"backgroundTasks.state.failed": "Fehlgeschlagen",
+	"agentSwitch.allHidden": "Alle Agenten ausgeblendet",
+	"newTask.allAgentsHidden": "Alle verfügbaren Agenten sind in den Einstellungen ausgeblendet.",
+	"settings.harness.showInPickers": "In Auswahlen anzeigen",
+	"settings.harness.toggleVisibility": "{{agent}} in Agenten- und Modellauswahlen anzeigen",
+	"settings.harness.hiddenBadge": "Ausgeblendet",
+	"settings.harness.models.harnessHiddenHint": "{{agent}} ist in Auswahlen ausgeblendet. Bestehende Sitzungen bleiben unverändert."
 }

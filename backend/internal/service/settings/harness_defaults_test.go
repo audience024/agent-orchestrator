@@ -89,3 +89,50 @@ func TestHarnessDisabledModelsAreNormalizedAndBounded(t *testing.T) {
 		t.Fatal("empty disabled models should remove the entry")
 	}
 }
+
+func TestPatchHarnessDefaultMergesAndResets(t *testing.T) {
+	ctx := context.Background()
+	store := &harnessSettingsStore{defaults: make(map[string]domain.HarnessDefault)}
+	svc := New(store, nil, Offering{}, nil)
+
+	if _, err := svc.PatchHarnessDefault(ctx, "not-an-agent", HarnessDefaultPatch{Hidden: new(true)}); !errors.Is(err, ErrUnknownHarness) {
+		t.Fatalf("unknown harness: %v", err)
+	}
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{}); !errors.Is(err, ErrInvalidHarnessDefault) {
+		t.Fatalf("empty patch: %v", err)
+	}
+
+	// Set disabledModels first, then hide without clearing disabledModels.
+	models := []string{" gpt-5 ", "gpt-5-mini", "gpt-5"}
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{DisabledModels: &models}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{Hidden: new(true)}); err != nil {
+		t.Fatal(err)
+	}
+	want := domain.HarnessDefault{DisabledModels: []string{"gpt-5", "gpt-5-mini"}, Hidden: true}
+	if got := harnessDefault(t, svc, domain.HarnessCodex); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after hide = %+v, want %+v", got, want)
+	}
+
+	// Clearing disabledModels while hidden keeps the entry because Hidden is still true.
+	empty := []string{}
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{DisabledModels: &empty}); err != nil {
+		t.Fatal(err)
+	}
+	wantHiddenOnly := domain.HarnessDefault{Hidden: true}
+	if got := harnessDefault(t, svc, domain.HarnessCodex); !reflect.DeepEqual(got, wantHiddenOnly) {
+		t.Fatalf("after clearing disabledModels while hidden = %+v, want %+v", got, wantHiddenOnly)
+	}
+	if _, saved := store.defaults[string(domain.HarnessCodex)]; !saved {
+		t.Fatal("hidden-only entry should remain stored")
+	}
+
+	// Unhiding with no disabled models removes the entry completely.
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{Hidden: new(false)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, saved := store.defaults[string(domain.HarnessCodex)]; saved {
+		t.Fatalf("fully cleared entry should be removed, got %+v", store.defaults)
+	}
+}

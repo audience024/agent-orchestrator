@@ -4950,3 +4950,100 @@ describe("Chat launch permission discovery recovery", () => {
 		expect(delegate.mock.calls[1][0].body.mode).toBe("tui");
 	});
 });
+
+describe("Hidden harness preferences", () => {
+	it("omits hidden harnesses from agentChoices and falls back to the first visible ready agent", async () => {
+		h.agentCatalog = {
+			agents: [
+				agentReadiness("claude-code", "Claude Code"),
+				agentReadiness("codex", "Codex"),
+			],
+		};
+		h.post.mockResolvedValue({ data: {} });
+		h.get.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["claude-code", "codex"],
+						harnessDefaults: { "claude-code": { hidden: true } },
+					},
+				};
+			}
+			if (path.includes("/models")) return { data: { models: [], allowCustom: true, selectionMode: "text" } };
+			return { data: { status: "ok", project: { id: "proj-1", agent: "claude-code", config: { worker: { agent: "claude-code" } } } } };
+		});
+		let task!: ReturnType<typeof useTaskLaunch>;
+		function Launcher() { task = useTaskLaunch({ projectId: "proj-1" }); return null; }
+		render(<Wrap><Launcher /></Wrap>);
+		await waitFor(() => expect(task.agent.value).toBe("codex"));
+		expect(task.agentChoices.map((choice) => choice.id)).toEqual(["codex"]);
+		expect(task.agent.agents?.map((agent) => agent.id)).toEqual(["codex"]);
+	});
+
+	it("reports when every available local agent is hidden and offers Settings", async () => {
+		h.agentCatalog = {
+			agents: [
+				agentReadiness("claude-code", "Claude Code"),
+				agentReadiness("codex", "Codex"),
+			],
+		};
+		h.post.mockResolvedValue({ data: {} });
+		h.get.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["claude-code", "codex"],
+						harnessDefaults: { "claude-code": { hidden: true }, codex: { hidden: true } },
+					},
+				};
+			}
+			if (path.includes("/models")) return { data: { models: [], allowCustom: true, selectionMode: "text" } };
+			return { data: { status: "ok", project: { id: "proj-1", agent: "claude-code", config: {} } } };
+		});
+		let task!: ReturnType<typeof useTaskLaunch>;
+		function Launcher() { task = useTaskLaunch({ projectId: "proj-1" }); return null; }
+		render(<Wrap><Launcher /></Wrap>);
+		await waitFor(() => expect(task.remoteLoadError).toBe("All available agents are hidden in Settings."));
+		expect(task.agentChoices).toEqual([]);
+		expect(task.agent.value).toBe("");
+		expect(task.canSubmit).toBe(false);
+		expect(task.remoteLoadErrorAction?.label).toBe("Open Agents settings");
+	});
+
+	it("keeps Cloud project agents visible even when hidden locally", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(providerConnectionsQueryKey, [
+			{ id: "conn-1", provider: "claude-code", label: "default", validationState: "valid", updatedAt: "2026-10-24T00:00:00Z", config: {} },
+			{ id: "conn-2", provider: "codex", label: "default", validationState: "valid", updatedAt: "2026-10-24T00:00:00Z", config: {} },
+		]);
+		h.cloudProjects = [{
+			id: "cloud-proj-1",
+			displayName: "Cloud Project",
+			repositoryUrl: "https://github.com/acme/repo",
+			defaultBranch: "main",
+			config: { worker: { agent: "claude-code" } },
+		}];
+		h.cloudListProviderConnections.mockReturnValue(new Promise(() => undefined));
+		h.cloudListUserAgentModels.mockResolvedValue({ models: [] });
+		h.post.mockResolvedValue({ data: {} });
+		h.get.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["claude-code", "codex"],
+						harnessDefaults: { "claude-code": { hidden: true }, codex: { hidden: true } },
+					},
+				};
+			}
+			return { data: {} };
+		});
+		let task!: ReturnType<typeof useTaskLaunch>;
+		function Launcher() { task = useTaskLaunch({ projectId: "cloud-proj-1" }); return null; }
+		render(<Wrap queryClient={queryClient}><Launcher /></Wrap>);
+		await waitFor(() => expect(task.agentChoices.map((choice) => choice.id)).toContain("claude-code"));
+		expect(task.agent.value).toBe("claude-code");
+	});
+});

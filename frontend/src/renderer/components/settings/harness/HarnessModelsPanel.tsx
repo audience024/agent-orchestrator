@@ -91,9 +91,14 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 	const selectedProvider = (providerChoice?.scope === scope ? providers.find((provider) => provider.id === providerChoice.id) : undefined) ?? initialProvider;
 	useEffect(() => { setPage(0); setModelSearch(""); }, [scope, selectedProvider?.id]);
 	const agent = agentLabel(agentId);
+	const harnessHidden = Boolean(settings?.harnessDefaults?.[agentId]?.hidden);
+	const hiddenHint = harnessHidden
+		? <p className="shrink-0 text-xs text-settings-muted">{t("settings.harness.models.harnessHiddenHint", { agent })}</p>
+		: null;
 	// Readiness explains an empty list; a saved list still shows while it runs.
 	if ((!installed || loginBlocksCatalog) && !catalog.data?.models?.length) {
 		return <div className="space-y-3">
+			{hiddenHint}
 			<div className="flex flex-col items-center gap-3 px-3 py-8 text-center">
 			<p className="text-sm text-settings-muted">{t(installed ? "settings.harness.models.needsLogin" : "settings.harness.models.notInstalled", { agent })}</p>
 			<Button type="button" size="sm" variant="secondary" onClick={onOpenAccount}>{t("settings.harness.tabAccount")}</Button>
@@ -148,6 +153,7 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 		</span>;
 	};
 	return <div className="flex min-h-0 flex-1 flex-col gap-3">
+		{hiddenHint}
 		{showProviders ? <div className="shrink-0 space-y-2">
 			<h3 className="text-sm font-medium text-settings-label">{t("settings.harness.models.provider")}</h3>
 			<SettingsOptionMenu

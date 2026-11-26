@@ -5591,5 +5591,11 @@
 	"backgroundTasks.state.failed": "Échec",
 	"backgroundTasks.shells_many": "{{count}} shells sont toujours en cours",
 	"backgroundTasks.agents_many": "{{count}} agents en arrière-plan en cours",
-	"backgroundTasks.tasks_many": "{{count}} tâches en arrière-plan en cours"
+	"backgroundTasks.tasks_many": "{{count}} tâches en arrière-plan en cours",
+	"agentSwitch.allHidden": "Tous les agents sont masqués",
+	"newTask.allAgentsHidden": "Tous les agents disponibles sont masqués dans les paramètres.",
+	"settings.harness.showInPickers": "Afficher dans les sélecteurs",
+	"settings.harness.toggleVisibility": "Afficher {{agent}} dans les sélecteurs d'agents et de modèles",
+	"settings.harness.hiddenBadge": "Masqué",
+	"settings.harness.models.harnessHiddenHint": "{{agent}} est masqué des sélecteurs. Les sessions existantes ne sont pas affectées."
 }

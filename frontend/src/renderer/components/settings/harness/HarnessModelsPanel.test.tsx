@@ -10,12 +10,17 @@ const h = vi.hoisted(() => ({
 		allowCustom?: boolean;
 		customModelEntry?: "direct" | "configured" | "none";
 	} | undefined,
+	harnessDefaults: {} as Record<string, { disabledModels?: string[]; hidden?: boolean }>,
 }));
-afterEach(() => { h.catalog = undefined; });
+afterEach(() => {
+	h.catalog = undefined;
+	h.harnessDefaults = {};
+	update.mockClear();
+});
 
-const update = vi.fn(async () => undefined);
+const update = vi.fn(async (_input: { agentId: string; disabledModels?: string[]; hidden?: boolean }) => undefined);
 vi.mock("../../../hooks/useSettings", () => ({
-	useSettings: () => ({ settings: { harnessDefaults: {} } }),
+	useSettings: () => ({ settings: { harnessDefaults: h.harnessDefaults } }),
 	useUpdateHarnessDefault: () => ({ update, error: undefined }),
 }));
 vi.mock("../../../hooks/useAgentModelsQuery", () => ({
@@ -66,5 +71,19 @@ describe("HarnessModelsPanel", () => {
 		expect(screen.getAllByRole("switch")).toHaveLength(2);
 		await userEvent.click(opus);
 		expect(update).toHaveBeenCalledWith({ agentId: "cursor", disabledModels: ["claude-opus-4-8-high", "claude-opus-4-8-thinking-high"] });
+	});
+
+	it("notes when the harness is hidden and updates disabledModels without sending hidden", async () => {
+		h.harnessDefaults = { cursor: { hidden: true } };
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<HarnessModelsPanel agentId="cursor" installed needsLogin={false} onOpenAccount={() => {}} />
+			</QueryClientProvider>,
+		);
+		expect(await screen.findByText("Cursor is hidden from pickers. Existing sessions are unaffected.")).toBeInTheDocument();
+		const opus = await screen.findByRole("switch", { name: /Claude Opus 4.8/ });
+		await userEvent.click(opus);
+		expect(update).toHaveBeenCalledWith({ agentId: "cursor", disabledModels: ["claude-opus-4-8-high", "claude-opus-4-8-thinking-high"] });
+		expect(update.mock.calls[0][0]).not.toHaveProperty("hidden");
 	});
 });

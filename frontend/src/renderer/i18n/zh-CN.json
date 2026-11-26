@@ -5403,5 +5403,11 @@
 	"backgroundTasks.stale": "已过期",
 	"backgroundTasks.kind.shell": "Shell",
 	"backgroundTasks.kind.other": "后台任务",
-	"backgroundTasks.state.failed": "失败"
+	"backgroundTasks.state.failed": "失败",
+	"agentSwitch.allHidden": "所有代理已隐藏",
+	"newTask.allAgentsHidden": "所有可用代理均已在设置中隐藏。",
+	"settings.harness.showInPickers": "在选择器中显示",
+	"settings.harness.toggleVisibility": "在代理和模型选择器中显示 {{agent}}",
+	"settings.harness.hiddenBadge": "已隐藏",
+	"settings.harness.models.harnessHiddenHint": "{{agent}} 已在选择器中隐藏，不影响已有会话。"
 }

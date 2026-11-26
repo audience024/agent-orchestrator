@@ -765,6 +765,56 @@ describe("HarnessSettingsSection", () => {
 		expect(within(page).getByRole("switch", { name: "Show GPT B in model pickers" })).toBeChecked();
 	});
 
+	it("toggles harness picker visibility without clearing saved disabledModels", async () => {
+		mockInstalledOperations("npm");
+		const models = {
+			agentId: "codex",
+			models: [
+				{ id: "gpt-a", label: "GPT A", isDefault: true, efforts: [] },
+				{ id: "gpt-b", label: "GPT B", efforts: [] },
+			],
+		};
+		let saved: { disabledModels?: string[]; hidden?: boolean } = { disabledModels: ["gpt-b"] };
+		const get = vi.mocked(apiClient.GET).getMockImplementation()!;
+		vi.mocked(apiClient.GET).mockImplementation(async (path, options) => path === "/api/v1/agents/{agent}/models" ? { data: models } as never
+			: path === "/api/v1/settings" ? { data: { harnessDefaults: { codex: saved } } } as never
+			: (get as (path: string, options: unknown) => Promise<never>)(path, options));
+		const post = vi.mocked(apiClient.POST).getMockImplementation()!;
+		vi.mocked(apiClient.POST).mockImplementation(async (path, options) => path === "/api/v1/agents/{agent}/models/refresh"
+			? { data: models } as never : (post as (path: string, options: unknown) => Promise<never>)(path, options));
+		const patch = vi.spyOn(apiClient, "PATCH").mockImplementation(async (_path, options) => {
+			const body = (options as { body: { disabledModels?: string[]; hidden?: boolean } }).body;
+			saved = { ...saved, ...body };
+			return { data: { harnessDefaults: { codex: saved } } } as never;
+		});
+
+		renderSection();
+		const page = await findAgentRow("codex");
+		const visibilitySwitch = within(page).getByRole("switch", { name: "Show Codex in agent and model pickers" });
+		expect(visibilitySwitch).toBeChecked();
+
+		await userEvent.click(visibilitySwitch);
+		await waitFor(() => expect(patch).toHaveBeenCalledWith("/api/v1/settings/harness-defaults/{agent}", {
+			params: { path: { agent: "codex" } },
+			body: { hidden: true },
+		}));
+		expect(visibilitySwitch).not.toBeChecked();
+
+		await userEvent.click(within(page).getByRole("tab", { name: "Models" }));
+		await within(page).findByRole("list", { name: "Available models" });
+		expect(within(page).getByText("Codex is hidden from pickers. Existing sessions are unaffected.")).toBeInTheDocument();
+		expect(within(page).getByRole("switch", { name: "Show GPT B in model pickers" })).not.toBeChecked();
+
+		await userEvent.click(visibilitySwitch);
+		await waitFor(() => expect(patch).toHaveBeenLastCalledWith("/api/v1/settings/harness-defaults/{agent}", {
+			params: { path: { agent: "codex" } },
+			body: { hidden: false },
+		}));
+		expect(visibilitySwitch).toBeChecked();
+		expect(within(page).queryByText("Codex is hidden from pickers. Existing sessions are unaffected.")).not.toBeInTheDocument();
+		expect(saved.disabledModels).toEqual(["gpt-b"]);
+	});
+
 	it("filters catalog by provider and resets pagination on provider change", async () => {
 		mockInstalledOperations("npm");
 		const models = {

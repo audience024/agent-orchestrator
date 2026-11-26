@@ -5591,5 +5591,11 @@
 	"backgroundTasks.state.failed": "Fallida",
 	"backgroundTasks.shells_many": "{{count}} shells siguen en ejecución",
 	"backgroundTasks.agents_many": "{{count}} agentes en segundo plano en ejecución",
-	"backgroundTasks.tasks_many": "{{count}} tareas en segundo plano en ejecución"
+	"backgroundTasks.tasks_many": "{{count}} tareas en segundo plano en ejecución",
+	"agentSwitch.allHidden": "Todos los agentes ocultos",
+	"newTask.allAgentsHidden": "Todos los agentes disponibles están ocultos en Configuración.",
+	"settings.harness.showInPickers": "Mostrar en selectores",
+	"settings.harness.toggleVisibility": "Mostrar {{agent}} en los selectores de agentes y modelos",
+	"settings.harness.hiddenBadge": "Oculto",
+	"settings.harness.models.harnessHiddenHint": "{{agent}} está oculto en los selectores. Las sesiones existentes no se ven afectadas."
 }

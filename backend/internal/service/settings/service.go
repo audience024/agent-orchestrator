@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -112,6 +113,8 @@ type Service struct {
 	versionRefresh atomic.Int32
 	// cuaInstalled reports whether Cua Driver is installed; nil skips the check.
 	cuaInstalled atomic.Pointer[func(context.Context) (bool, error)]
+	// harnessDefaultsMu serializes read-merge-write patches to harness_defaults.
+	harnessDefaultsMu sync.Mutex
 }
 
 // errCuaDriverMissing refuses turning computer use on without Cua Driver.
@@ -346,6 +349,13 @@ var ErrInvalidHarnessDefault = errors.New("invalid harness default")
 // ErrUnknownHarness marks a preference for a harness AO does not know.
 var ErrUnknownHarness = errors.New("unknown harness")
 
+// HarnessDefaultPatch updates selected fields of one harness's picker preference.
+// Nil fields keep their existing values.
+type HarnessDefaultPatch struct {
+	DisabledModels *[]string
+	Hidden         *bool
+}
+
 // SetHarnessDefault replaces the selected harness's picker preference. The
 // store writes only that harness's entry, so concurrent saves for other
 // harnesses are kept.
@@ -358,7 +368,45 @@ func (s *Service) SetHarnessDefault(ctx context.Context, agent domain.AgentHarne
 		return Snapshot{}, fmt.Errorf("%w: disabled models must be at most %d model ids of up to 256 characters", ErrInvalidHarnessDefault, maxDisabledModels)
 	}
 	value.DisabledModels = disabled
+	s.harnessDefaultsMu.Lock()
+	defer s.harnessDefaultsMu.Unlock()
 	if err := s.store.SetHarnessDefault(ctx, agent, value, s.now()); err != nil {
+		return Snapshot{}, err
+	}
+	return s.Get(ctx)
+}
+
+// PatchHarnessDefault merges the supplied fields into the selected harness's
+// picker preference without clobbering omitted fields.
+func (s *Service) PatchHarnessDefault(ctx context.Context, agent domain.AgentHarness, patch HarnessDefaultPatch) (Snapshot, error) {
+	if !slices.Contains(domain.AllHarnesses, agent) {
+		return Snapshot{}, fmt.Errorf("%w %q", ErrUnknownHarness, agent)
+	}
+	if patch.DisabledModels == nil && patch.Hidden == nil {
+		return Snapshot{}, fmt.Errorf("%w: at least one of disabledModels or hidden is required", ErrInvalidHarnessDefault)
+	}
+	var disabled []string
+	if patch.DisabledModels != nil {
+		var ok bool
+		disabled, ok = normalizeDisabledModels(*patch.DisabledModels)
+		if !ok {
+			return Snapshot{}, fmt.Errorf("%w: disabled models must be at most %d model ids of up to 256 characters", ErrInvalidHarnessDefault, maxDisabledModels)
+		}
+	}
+	s.harnessDefaultsMu.Lock()
+	defer s.harnessDefaultsMu.Unlock()
+	current, err := s.store.GetAppSettings(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	next := current.HarnessDefaults[string(agent)]
+	if patch.DisabledModels != nil {
+		next.DisabledModels = disabled
+	}
+	if patch.Hidden != nil {
+		next.Hidden = *patch.Hidden
+	}
+	if err := s.store.SetHarnessDefault(ctx, agent, next, s.now()); err != nil {
 		return Snapshot{}, err
 	}
 	return s.Get(ctx)
