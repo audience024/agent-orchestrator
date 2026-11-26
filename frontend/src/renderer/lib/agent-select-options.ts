@@ -70,26 +70,51 @@ export type ProjectAgentDefaults = {
 // The daemon's own default agent, used when no agent could be checked at all.
 const FALLBACK_PROJECT_AGENT = DEFAULT_AGENT_PRIORITY[0];
 
-function isConfirmedAgent(agent: AgentInfo): boolean {
-	return agent.installation.state === "installed" &&
-		["authorized", "not_applicable", "configured"].includes(agent.authentication.state);
+export type AgentVisibilityMap = Record<string, { hidden?: boolean } | undefined>;
+
+/**
+ * Excludes agents hidden in picker preferences from default project selection.
+ * When every launchable agent is hidden, falls back to the unfiltered list so
+ * a project never drops to an empty selection.
+ */
+export function filterVisibleProjectAgents<T extends AgentInfo>(
+	agents: readonly T[],
+	harnessDefaults?: AgentVisibilityMap,
+): T[] {
+	if (!harnessDefaults) return [...agents];
+	const visible = agents.filter((agent) => !harnessDefaults[agent.id]?.hidden);
+	return visible.some(isLaunchableAgent) ? visible : [...agents];
 }
 
-// How much AO knows about an agent: confirmed installed and signed in, found
-// installed with sign-in not checked yet, or not checked at all.
+// Confirmed means installed and verified signed in (or needing no sign-in).
+// Unverified "configured" credentials sit in a lower tier.
+function isConfirmedAgent(agent: AgentInfo): boolean {
+	return agent.installation.state === "installed" &&
+		(agent.authentication.state === "authorized" || agent.authentication.state === "not_applicable");
+}
+
+function hasUncheckedState(agent: AgentInfo): boolean {
+	return agent.installation.state === "unknown" || agent.authentication.state === "unknown";
+}
+
+// How much AO knows about an agent: installed and verified signed in,
+// installed with a configured (unverified) credential, installed with
+// sign-in unchecked, or installation unchecked.
 function readinessTier(agent: AgentInfo): number {
-	if (isConfirmedAgent(agent)) return 2;
-	return agent.installation.state === "installed" ? 1 : 0;
+	if (isConfirmedAgent(agent)) return 3;
+	if (agent.installation.state === "installed") {
+		return agent.authentication.state === "configured" ? 2 : 1;
+	}
+	return 0;
 }
 
 /**
  * The agents a new project can start on, most preferred first. Agents AO found
- * installed and signed in come first, then agents it found installed but whose
+ * installed and verified signed in come first, then installed agents with
+ * configured (unverified) credentials, then agents found installed whose
  * sign-in it has not checked, then agents it has not checked at all, so an
  * agent that may not be installed never beats one that is. Within each group,
- * AO's integration priority decides. Missing or signed-out agents
- * are left out. "configured" counts as signed in: AO cannot verify most
- * credentials, and that is not a reason to pass over an agent.
+ * AO's integration priority decides. Missing or signed-out agents are left out.
  */
 export function preferredAgentList(agents: readonly AgentInfo[]): string[] {
 	const priority = (agent: AgentInfo) => DEFAULT_AGENT_PRIORITY_RANK.get(agent.id) ?? Number.MAX_SAFE_INTEGER;
@@ -105,18 +130,24 @@ export function preferredAgentList(agents: readonly AgentInfo[]): string[] {
 }
 
 /**
- * Whether checks AO has not finished could still change the pick: the agent AO
- * prefers most among the usable ones is not confirmed yet. A snapshot taken
- * before the daemon's first checks reads "not checked" for every agent, and
- * ranking it would start the project on Claude Code even when only Codex is
- * installed.
+ * Whether checks AO has not finished could still change the pick: when the
+ * current pick is already confirmed (installed + authorized/not_applicable),
+ * only an unchecked agent with higher priority can overtake it; when the
+ * current pick sits in a lower tier (such as configured), any unchecked
+ * launchable agent could finish as authorized and overtake it.
  */
 export function preferredAgentNeedsChecks(agents: readonly AgentInfo[]): boolean {
 	const priority = (agent: AgentInfo) => DEFAULT_AGENT_PRIORITY_RANK.get(agent.id) ?? Number.MAX_SAFE_INTEGER;
-	const first = agents
-		.filter(isLaunchableAgent)
-		.sort((a, b) => priority(a) - priority(b) || agentLabelCompare(a, b))[0];
-	return first !== undefined && !isConfirmedAgent(first);
+	const priorityCompare = (a: AgentInfo, b: AgentInfo) => priority(a) - priority(b) || agentLabelCompare(a, b);
+	const launchable = agents.filter(isLaunchableAgent);
+	if (launchable.length === 0) return false;
+	const best = [...launchable].sort(
+		(a, b) => readinessTier(b) - readinessTier(a) || priorityCompare(a, b),
+	)[0];
+	const bestConfirmed = isConfirmedAgent(best);
+	return launchable.some(
+		(agent) => hasUncheckedState(agent) && (!bestConfirmed || priorityCompare(agent, best) < 0),
+	);
 }
 
 /**

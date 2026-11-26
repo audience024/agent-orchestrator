@@ -2,11 +2,17 @@ import { apiErrorException } from "../lib/api-error-exception";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { AgentCheckError } from "../lib/agent-check-error";
-import { defaultProjectAgents, hasInstalledAgent, preferredAgentNeedsChecks, type ProjectAgentDefaults } from "../lib/agent-select-options";
+import {
+	defaultProjectAgents,
+	filterVisibleProjectAgents,
+	hasInstalledAgent,
+	preferredAgentNeedsChecks,
+	type ProjectAgentDefaults,
+} from "../lib/agent-select-options";
 import type { components } from "../../api/schema";
 import { apiClient } from "../lib/api-client";
 import { clientForHost } from "../lib/host-clients";
-import { settingsQueryKey, type Settings } from "./useSettings";
+import { settingsQueryOptions, type Settings } from "./useSettings";
 
 export type AgentReadiness = components["schemas"]["AgentReadinessResponse"];
 export type AgentReadinessSnapshot = components["schemas"]["AgentReadinessSnapshot"];
@@ -64,14 +70,40 @@ export const agentReadinessQueryOptions = {
 // Bounds the readiness wait so creating or starting a project never hangs on
 // a daemon that accepted the request and stopped answering.
 const PROJECT_AGENT_DEFAULTS_DEADLINE_MS = 5000;
+// Bounds the settings fetch when React Query hasn't cached settings yet so
+// project creation degrades safely instead of stalling on a slow endpoint.
+const PROJECT_SETTINGS_DEADLINE_MS = 2000;
+
+async function readSettingsHarnessDefaults(
+	queryClient: QueryClient,
+	hostId?: string,
+): Promise<Settings["harnessDefaults"] | undefined> {
+	const options = settingsQueryOptions(hostId);
+	const cached = queryClient.getQueryData<Settings>(options.queryKey);
+	if (cached) return cached.harnessDefaults;
+	const loaded = await withinMs(
+		queryClient
+			.ensureQueryData({
+				...options,
+				retry: false,
+			})
+			.catch(() => null),
+		PROJECT_SETTINGS_DEADLINE_MS,
+	);
+	return (loaded ?? queryClient.getQueryData<Settings>(options.queryKey))?.harnessDefaults;
+}
 
 // The readiness snapshot ranked for a project's default agents: the one the
-// renderer already holds, or one fetch when it holds none. When it hasn't
-// confirmed the agent AO prefers most, or hasn't found any agent installed (the
-// cache never expires, so one may have been installed since), it waits for the
-// daemon's checks (joining any already running) first. Null when it could not
-// be loaded.
-async function readProjectAgentSnapshot(queryClient: QueryClient, hostId?: string): Promise<AgentReadinessSnapshot[] | null> {
+// renderer already holds, or one fetch when it holds none. When pending checks
+// could still promote a visible candidate, or no visible candidate has been
+// found installed (the cache never expires, so one may have been installed
+// since), it waits for the daemon's checks (joining any already running) first.
+// Null when it could not be loaded.
+async function readProjectAgentSnapshot(
+	queryClient: QueryClient,
+	hostId?: string,
+	harnessDefaults?: Settings["harnessDefaults"],
+): Promise<AgentReadinessSnapshot[] | null> {
 	let agents: AgentReadinessSnapshot[];
 	try {
 		agents = (await queryClient.ensureQueryData({
@@ -82,13 +114,14 @@ async function readProjectAgentSnapshot(queryClient: QueryClient, hostId?: strin
 	} catch {
 		return null;
 	}
-	const noInstalled = !hasInstalledAgent(agents);
-	if (preferredAgentNeedsChecks(agents) || noInstalled) {
+	const candidates = filterVisibleProjectAgents(agents, harnessDefaults);
+	const noInstalled = !hasInstalledAgent(candidates);
+	if (preferredAgentNeedsChecks(candidates) || noInstalled) {
 		try {
 			// When the daemon already checked agents and cached them as not_installed or
 			// unauthorized, display ensure returns that cache for 5 min. Force a refresh
 			// so an agent installed or signed in moments ago is picked up immediately.
-			const hasCachedFailure = noInstalled && agents.some(
+			const hasCachedFailure = noInstalled && candidates.some(
 				(agent) =>
 					agent.installation.state === "not_installed" ||
 					(agent.installation.state === "installed" && agent.authentication.state === "unauthorized"),
@@ -124,8 +157,15 @@ function withinMs<T>(work: Promise<T>, ms: number): Promise<T | null> {
 	return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
 }
 
-async function readProjectAgentSnapshotWithDeadline(queryClient: QueryClient, hostId?: string): Promise<AgentReadinessSnapshot[] | null> {
-	const checked = await withinMs(readProjectAgentSnapshot(queryClient, hostId), PROJECT_AGENT_DEFAULTS_DEADLINE_MS);
+async function readProjectAgentSnapshotWithDeadline(
+	queryClient: QueryClient,
+	hostId?: string,
+	harnessDefaults?: Settings["harnessDefaults"],
+): Promise<AgentReadinessSnapshot[] | null> {
+	const checked = await withinMs(
+		readProjectAgentSnapshot(queryClient, hostId, harnessDefaults),
+		PROJECT_AGENT_DEFAULTS_DEADLINE_MS,
+	);
 	if (checked) return checked;
 	// The checks outlasted the limit, or the first read failed. The daemon keeps
 	// checking and records each agent as it finishes, so rank what it knows now
@@ -140,11 +180,10 @@ async function readProjectAgentSnapshotWithDeadline(queryClient: QueryClient, ho
  * it ranks nothing, so the project falls back to AO's default agent.
  */
 export async function loadProjectAgentDefaults(queryClient: QueryClient, hostId?: string): Promise<ProjectAgentDefaults> {
-	const agents = (await readProjectAgentSnapshotWithDeadline(queryClient, hostId)) ?? [];
-	const settings = queryClient.getQueryData<Settings>(hostId ? ["settings", hostId] : settingsQueryKey);
-	const hidden = settings?.harnessDefaults;
-	const visible = hidden ? agents.filter((agent) => !hidden[agent.id]?.hidden) : agents;
-	return defaultProjectAgents(visible.length > 0 ? visible : agents);
+	const harnessDefaults = await readSettingsHarnessDefaults(queryClient, hostId);
+	const agents = (await readProjectAgentSnapshotWithDeadline(queryClient, hostId, harnessDefaults)) ?? [];
+	const candidates = filterVisibleProjectAgents(agents, harnessDefaults);
+	return defaultProjectAgents(candidates);
 }
 
 export function useAgentReadinessQuery(enabled = true, hostId?: string) {

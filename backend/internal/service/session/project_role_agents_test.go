@@ -260,3 +260,55 @@ func TestFillMissingRoleAgentsAllowsSavedAccountWhenComputerLoginUnauthorized(t 
 		t.Fatalf("roles = worker %q orchestrator %q, want codex when using saved account", got.Config.Worker.Harness, got.Config.Orchestrator.Harness)
 	}
 }
+
+func TestFillMissingRoleAgentsPrefersVisibleAuthorizedAndPreservesExplicitHiddenRole(t *testing.T) {
+	snapshot := []domain.AgentReadinessSnapshot{
+		{
+			ID:             "claude-code",
+			Label:          "Claude Code",
+			Installation:   domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+			Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationConfigured},
+		},
+		{
+			ID:             "codex",
+			Label:          "Codex",
+			Installation:   domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+			Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationAuthorized},
+		},
+		{
+			ID:             "agy",
+			Label:          "Agy",
+			Installation:   domain.AgentInstallationObservation{State: domain.AgentInstallationInstalled},
+			Authentication: domain.AgentAuthenticationObservation{State: domain.AgentAuthenticationAuthorized},
+		},
+	}
+	hidden := map[string]domain.HarnessDefault{
+		"codex": {Hidden: true},
+	}
+	pick := func(context.Context) domain.AgentHarness {
+		return domain.PreferredInstalledProjectAgent(domain.FilterVisibleProjectAgents(snapshot, hidden))
+	}
+
+	st := &roleFillingStore{fakeStore: newFakeStore()}
+	// Worker explicitly pins hidden codex; orchestrator is missing and should fill with visible authorized agy.
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer",
+		Config: domain.ProjectConfig{
+			Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+		},
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+	svc.SetPreferredProjectAgent(pick)
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", false, "", ""); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.Harness != domain.HarnessAgy {
+		t.Fatalf("spawn harness = %q, want visible authorized %q", fc.spawnedCfg.Harness, domain.HarnessAgy)
+	}
+	got := st.projects["mer"].Config
+	if got.Worker.Harness != domain.HarnessCodex || got.Orchestrator.Harness != domain.HarnessAgy {
+		t.Fatalf("roles = worker %q orchestrator %q, want explicit worker codex and filled orchestrator agy", got.Worker.Harness, got.Orchestrator.Harness)
+	}
+}

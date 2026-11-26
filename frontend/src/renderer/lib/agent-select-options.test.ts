@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { components } from "../../api/schema";
-import { buildRankedAgentOptions, defaultProjectAgents, isLaunchableAgent, preferredAgentList, preferredAgentNeedsChecks } from "./agent-select-options";
+import {
+	buildRankedAgentOptions,
+	defaultProjectAgents,
+	filterVisibleProjectAgents,
+	isLaunchableAgent,
+	preferredAgentList,
+	preferredAgentNeedsChecks,
+} from "./agent-select-options";
 
 type Agent = components["schemas"]["AgentReadinessSnapshot"];
 
@@ -197,11 +204,41 @@ describe("preferredAgentList", () => {
 		]);
 	});
 
-	it("counts a configured credential as signed in", () => {
+	it("puts installed authorized and not_applicable agents ahead of installed configured agents", () => {
+		expect(
+			preferredAgentList([
+				agent("claude-code", "installed", "configured"),
+				agent("codex", "installed", "authorized"),
+			]),
+		).toEqual(["codex", "claude-code"]);
+		expect(
+			preferredAgentList([
+				agent("claude-code", "installed", "configured"),
+				agent("agy", "installed", "authorized"),
+			]),
+		).toEqual(["agy", "claude-code"]);
+		expect(
+			preferredAgentList([
+				agent("claude-code", "installed", "configured"),
+				agent("aider", "installed", "not_applicable"),
+			]),
+		).toEqual(["aider", "claude-code"]);
+	});
+
+	it("puts installed configured agents ahead of installed agents with unknown auth", () => {
 		expect(preferredAgentList([agent("claude-code", "installed", "unknown"), agent("codex", "installed", "configured")])).toEqual([
 			"codex",
 			"claude-code",
 		]);
+	});
+
+	it("orders configured agents by integration priority within their tier", () => {
+		expect(
+			preferredAgentList([
+				agent("cursor", "installed", "configured"),
+				agent("claude-code", "installed", "configured"),
+			]),
+		).toEqual(["claude-code", "cursor"]);
 	});
 
 	it("leaves out agents that are missing or signed out", () => {
@@ -222,12 +259,70 @@ describe("preferredAgentNeedsChecks", () => {
 
 	it("waits for checks when a more preferred agent could still outrank the confirmed one", () => {
 		expect(preferredAgentNeedsChecks([agent("claude-code", "unknown", "unknown"), agent("codex")])).toBe(true);
+		expect(preferredAgentNeedsChecks([agent("claude-code", "installed", "unknown"), agent("codex")])).toBe(true);
 	});
 
-	it("ranks right away once the most preferred usable agent is confirmed", () => {
+	it("waits for checks when the current pick is only configured and another launchable agent is still unchecked", () => {
+		expect(
+			preferredAgentNeedsChecks([
+				agent("claude-code", "installed", "configured"),
+				agent("codex", "unknown", "unknown"),
+			]),
+		).toBe(true);
+		expect(
+			preferredAgentNeedsChecks([
+				agent("claude-code", "installed", "configured"),
+				agent("agy", "installed", "unknown"),
+			]),
+		).toBe(true);
+	});
+
+	it("ranks right away once no unchecked agent can overtake the current pick", () => {
 		expect(preferredAgentNeedsChecks([agent("claude-code"), agent("codex", "unknown", "unknown")])).toBe(false);
+		expect(
+			preferredAgentNeedsChecks([
+				agent("claude-code", "installed", "configured"),
+				agent("codex", "installed", "authorized"),
+				agent("cursor", "unknown", "unknown"),
+			]),
+		).toBe(false);
 		expect(preferredAgentNeedsChecks([agent("claude-code", "not_installed"), agent("codex", "installed", "configured")])).toBe(false);
 		expect(preferredAgentNeedsChecks([])).toBe(false);
+	});
+});
+
+describe("filterVisibleProjectAgents", () => {
+	it("excludes hidden agents so selection picks the next visible authorized agent", () => {
+		const agents = [
+			agent("claude-code", "installed", "authorized"),
+			agent("codex", "installed", "authorized"),
+		];
+		const visible = filterVisibleProjectAgents(agents, { "claude-code": { hidden: true } });
+		expect(preferredAgentList(visible)).toEqual(["codex"]);
+	});
+
+	it("falls back to the unfiltered list when every launchable agent is hidden", () => {
+		const agents = [
+			agent("claude-code", "installed", "authorized"),
+			agent("codex", "not_installed", "unknown"),
+			agent("cursor", "installed", "unauthorized"),
+		];
+		const visible = filterVisibleProjectAgents(agents, { "claude-code": { hidden: true } });
+		expect(preferredAgentList(visible)).toEqual(["claude-code"]);
+	});
+
+	it("keeps check decisions aligned with visible agents", () => {
+		const hiddenHigherUnchecked = filterVisibleProjectAgents(
+			[agent("claude-code", "unknown", "unknown"), agent("codex", "installed", "authorized")],
+			{ "claude-code": { hidden: true } },
+		);
+		expect(preferredAgentNeedsChecks(hiddenHigherUnchecked)).toBe(false);
+
+		const hiddenHigherAuthorized = filterVisibleProjectAgents(
+			[agent("claude-code", "installed", "authorized"), agent("codex", "unknown", "unknown")],
+			{ "claude-code": { hidden: true } },
+		);
+		expect(preferredAgentNeedsChecks(hiddenHigherAuthorized)).toBe(true);
 	});
 });
 

@@ -120,9 +120,31 @@ describe("agent readiness query", () => {
 });
 
 describe("project agent defaults", () => {
+	function routeGet({
+		readiness,
+		settings = { data: { defaultSessionMode: "tui", chatHarnesses: [], harnessDefaults: {} }, error: undefined },
+	}: {
+		readiness: Array<{ data: { agents: ReturnType<typeof agentReadiness>[] }; error: undefined }> | { data: { agents: ReturnType<typeof agentReadiness>[] }; error: undefined };
+		settings?: { data?: Record<string, unknown>; error?: unknown } | (() => Promise<unknown>);
+	}) {
+		let readinessIdx = 0;
+		getMock.mockImplementation((path: string) => {
+			if (path === "/api/v1/settings") {
+				return typeof settings === "function" ? settings() : Promise.resolve(settings);
+			}
+			if (Array.isArray(readiness)) {
+				const item = readiness[Math.min(readinessIdx, readiness.length - 1)];
+				readinessIdx += 1;
+				return Promise.resolve(item);
+			}
+			return Promise.resolve(readiness);
+		});
+	}
+
 	it("forces a daemon refresh before falling back when cached agents are not installed", async () => {
-		const none = { data: { agents: [agentReadiness("codex", "Codex", { installation: "not_installed" })] }, error: undefined };
-		getMock.mockResolvedValue(none);
+		routeGet({
+			readiness: { data: { agents: [agentReadiness("codex", "Codex", { installation: "not_installed" })] }, error: undefined },
+		});
 		postMock.mockResolvedValue({ data: {}, error: undefined });
 
 		await expect(loadProjectAgentDefaults(new QueryClient())).resolves.toMatchObject({ workerAgent: "claude-code", orchestratorAgent: "claude-code" });
@@ -130,9 +152,12 @@ describe("project agent defaults", () => {
 	});
 
 	it("forces a daemon refresh on a cached not_installed snapshot and ranks a newly installed agent", async () => {
-		getMock
-			.mockResolvedValueOnce({ data: { agents: [agentReadiness("codex", "Codex", { installation: "not_installed" })] }, error: undefined })
-			.mockResolvedValueOnce({ data: { agents: [agentReadiness("codex", "Codex")] }, error: undefined });
+		routeGet({
+			readiness: [
+				{ data: { agents: [agentReadiness("codex", "Codex", { installation: "not_installed" })] }, error: undefined },
+				{ data: { agents: [agentReadiness("codex", "Codex")] }, error: undefined },
+			],
+		});
 		postMock.mockResolvedValueOnce({ data: {}, error: undefined });
 
 		await expect(loadProjectAgentDefaults(new QueryClient())).resolves.toMatchObject({ workerAgent: "codex", orchestratorAgent: "codex" });
@@ -143,9 +168,12 @@ describe("project agent defaults", () => {
 		vi.useFakeTimers();
 		try {
 			const unchecked = { installation: "unknown", authentication: "unknown" } as const;
-			getMock
-				.mockResolvedValueOnce({ data: { agents: [agentReadiness("claude-code", "Claude Code", unchecked), agentReadiness("codex", "Codex", unchecked)] }, error: undefined })
-				.mockResolvedValue({ data: { agents: [agentReadiness("claude-code", "Claude Code", unchecked), agentReadiness("codex", "Codex", { authentication: "unknown" })] }, error: undefined });
+			routeGet({
+				readiness: [
+					{ data: { agents: [agentReadiness("claude-code", "Claude Code", unchecked), agentReadiness("codex", "Codex", unchecked)] }, error: undefined },
+					{ data: { agents: [agentReadiness("claude-code", "Claude Code", unchecked), agentReadiness("codex", "Codex", { authentication: "unknown" })] }, error: undefined },
+				],
+			});
 			postMock.mockReturnValue(new Promise(() => {}));
 
 			const defaults = loadProjectAgentDefaults(new QueryClient());
@@ -156,5 +184,139 @@ describe("project agent defaults", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("prefers an authorized agent over a higher-priority configured agent", async () => {
+		routeGet({
+			readiness: {
+				data: {
+					agents: [
+						agentReadiness("claude-code", "Claude Code", { authentication: "configured" }),
+						agentReadiness("agy", "Agy", { authentication: "authorized" }),
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		await expect(loadProjectAgentDefaults(new QueryClient())).resolves.toMatchObject({
+			workerAgent: "agy",
+			orchestratorAgent: "agy",
+		});
+	});
+
+	it("fetches uncached settings before filtering hidden agents", async () => {
+		routeGet({
+			readiness: {
+				data: {
+					agents: [
+						agentReadiness("claude-code", "Claude Code"),
+						agentReadiness("codex", "Codex"),
+					],
+				},
+				error: undefined,
+			},
+			settings: {
+				data: {
+					defaultSessionMode: "tui",
+					chatHarnesses: [],
+					harnessDefaults: { "claude-code": { hidden: true } },
+				},
+				error: undefined,
+			},
+		});
+
+		await expect(loadProjectAgentDefaults(new QueryClient())).resolves.toMatchObject({
+			workerAgent: "codex",
+			orchestratorAgent: "codex",
+		});
+		expect(getMock).toHaveBeenCalledWith("/api/v1/settings", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+	});
+
+	it("degrades safely when fetching uncached settings fails", async () => {
+		routeGet({
+			readiness: {
+				data: {
+					agents: [
+						agentReadiness("claude-code", "Claude Code"),
+						agentReadiness("codex", "Codex"),
+					],
+				},
+				error: undefined,
+			},
+			settings: () => Promise.reject(new Error("settings offline")),
+		});
+
+		await expect(loadProjectAgentDefaults(new QueryClient())).resolves.toMatchObject({
+			workerAgent: "claude-code",
+			orchestratorAgent: "claude-code",
+		});
+	});
+
+	it("falls back to hidden launchable agents when every launchable agent is hidden", async () => {
+		routeGet({
+			readiness: {
+				data: {
+					agents: [
+						agentReadiness("claude-code", "Claude Code", { installation: "not_installed" }),
+						agentReadiness("codex", "Codex", { authentication: "authorized" }),
+					],
+				},
+				error: undefined,
+			},
+			settings: {
+				data: {
+					defaultSessionMode: "tui",
+					chatHarnesses: [],
+					harnessDefaults: { codex: { hidden: true } },
+				},
+				error: undefined,
+			},
+		});
+
+		await expect(loadProjectAgentDefaults(new QueryClient())).resolves.toMatchObject({
+			workerAgent: "codex",
+			orchestratorAgent: "codex",
+		});
+	});
+
+	it("runs checks for visible unchecked candidates when a higher-priority authorized agent is hidden", async () => {
+		const unchecked = { installation: "unknown", authentication: "unknown" } as const;
+		routeGet({
+			readiness: {
+				data: {
+					agents: [
+						agentReadiness("claude-code", "Claude Code"),
+						agentReadiness("codex", "Codex", unchecked),
+					],
+				},
+				error: undefined,
+			},
+			settings: {
+				data: {
+					defaultSessionMode: "tui",
+					chatHarnesses: [],
+					harnessDefaults: { "claude-code": { hidden: true } },
+				},
+				error: undefined,
+			},
+		});
+		postMock.mockResolvedValueOnce({
+			data: {
+				agents: [
+					agentReadiness("claude-code", "Claude Code"),
+					agentReadiness("codex", "Codex"),
+				],
+			},
+			error: undefined,
+		});
+
+		await expect(loadProjectAgentDefaults(new QueryClient())).resolves.toMatchObject({
+			workerAgent: "codex",
+			orchestratorAgent: "codex",
+		});
+		expect(postMock).toHaveBeenCalledWith("/api/v1/agents/readiness/ensure", {
+			body: { agentIds: [], purpose: "display" },
+		});
 	});
 });

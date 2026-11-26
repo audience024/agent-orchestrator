@@ -867,11 +867,12 @@ func Run(buildVersion string) (retErr error) {
 	if githubRepos != nil {
 		sessionSvc.SetGitHubRepositoryResolver(githubRepos)
 	}
-	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), PreferredAgent: preferredProjectAgent(agentSvc), Telemetry: telemetrySink, Milestones: installMilestones(cfg), Logger: log, GitHubRepos: githubRepos})
+	preferredAgent := preferredProjectAgent(agentSvc, settingsSvc)
+	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), PreferredAgent: preferredAgent, Telemetry: telemetrySink, Milestones: installMilestones(cfg), Logger: log, GitHubRepos: githubRepos})
 	// Neither project creation nor session start saves an uninstalled fallback:
 	// when no launchable agent is found, empty roles stay empty so the next
 	// start fills them once an agent is installed.
-	sessionSvc.SetPreferredProjectAgent(preferredProjectAgent(agentSvc))
+	sessionSvc.SetPreferredProjectAgent(preferredAgent)
 	go projectSvc.WarmCanonicalRepos(ctx)
 	reportSessions, ok := sessMgr.(reportSemanticSession)
 	if !ok {
@@ -1921,13 +1922,18 @@ func (c pluginBinaryCache) InvalidateBinaryResolution(harness domain.AgentHarnes
 	}
 }
 
+type projectAgentSettings interface {
+	Get(ctx context.Context) (settingssvc.Snapshot, error)
+}
+
 // preferredProjectAgent ranks this machine's installed agents from the cached readiness snapshot,
-// running display checks first when the agent AO prefers most is not confirmed
-// yet or no agent has been found installed. When nothing launchable is installed,
-// cached not_installed and unauthorized entries are invalidated first so an agent
-// installed or signed in within the display TTL is seen immediately. It returns ""
-// when the checks have found no launchable agent installed, so a guess is never saved.
-func preferredProjectAgent(agents *agentsvc.Service) func(context.Context) domain.AgentHarness {
+// excluding agents hidden in picker settings (falling back to all launchable agents if every
+// launchable agent is hidden), and running display checks first when pending checks could promote
+// another candidate or no agent has been found installed. When nothing launchable is installed,
+// cached not_installed and unauthorized entries are invalidated first so an agent installed or
+// signed in within the display TTL is seen immediately. It returns "" when the checks have found
+// no launchable agent installed, so a guess is never saved.
+func preferredProjectAgent(agents *agentsvc.Service, settings projectAgentSettings) func(context.Context) domain.AgentHarness {
 	return func(ctx context.Context) domain.AgentHarness {
 		if agents == nil {
 			return ""
@@ -1936,11 +1942,18 @@ func preferredProjectAgent(agents *agentsvc.Service) func(context.Context) domai
 		if err != nil {
 			return ""
 		}
+		var harnessDefaults map[string]domain.HarnessDefault
+		if settings != nil {
+			if snap, err := settings.Get(ctx); err == nil {
+				harnessDefaults = snap.HarnessDefaults
+			}
+		}
 		snapshot := readiness.Agents
-		noInstalled := domain.PreferredInstalledProjectAgent(snapshot) == ""
-		if domain.PreferredProjectAgentNeedsChecks(snapshot) || noInstalled {
+		candidates := domain.FilterVisibleProjectAgents(snapshot, harnessDefaults)
+		noInstalled := domain.PreferredInstalledProjectAgent(candidates) == ""
+		if domain.PreferredProjectAgentNeedsChecks(candidates) || noInstalled {
 			if noInstalled {
-				for _, item := range snapshot {
+				for _, item := range candidates {
 					if item.Installation.State == domain.AgentInstallationNotInstalled {
 						agents.InvalidateAgentInstallation(item.ID)
 					} else if item.Installation.State == domain.AgentInstallationInstalled &&
@@ -1959,6 +1972,10 @@ func preferredProjectAgent(agents *agentsvc.Service) func(context.Context) domai
 				// agent as it finishes, so rank what they found so far.
 				snapshot = latest.Agents
 			}
+			candidates = domain.FilterVisibleProjectAgents(snapshot, harnessDefaults)
+		}
+		if picked := domain.PreferredInstalledProjectAgent(candidates); picked != "" {
+			return picked
 		}
 		return domain.PreferredInstalledProjectAgent(snapshot)
 	}

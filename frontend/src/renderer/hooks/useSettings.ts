@@ -53,7 +53,7 @@ const settingsReadTimeoutMs = 10_000;
 // once the daemon is ready.
 const settingsRefetchInterval = 15_000;
 
-function settingsQueryOptions(hostId?: string) {
+export function settingsQueryOptions(hostId?: string) {
 	return {
 		queryKey: hostId ? ["settings", hostId] : settingsQueryKey,
 		retry: 5,
