@@ -621,11 +621,16 @@ export function useTaskLaunch({ projectId, hostId }: {
 	// (the single source), with readiness derived from the user's provider connections.
 	const cloudConnectionsQuery = useProviderConnections();
 	const cloudAgents = useMemo(() => cloudAgentInfos(cloudConnectionsQuery.data), [cloudConnectionsQuery.data]);
+	// Cloud projects use control-plane agents and must not be filtered by local harness settings.
+	const isHiddenHarness = useCallback(
+		(id: string) => !isCloudProject && Boolean(settings?.harnessDefaults?.[id]?.hidden),
+		[isCloudProject, settings?.harnessDefaults],
+	);
 	const readyFallbackAgent = agentCatalog && (isStandalone || projectQuery.data) ? buildRankedAgentOptions({
 		agents: agentCatalog.agents,
 		priorityRank: DEFAULT_AGENT_PRIORITY_RANK,
 		fallbackAgents: [],
-	}).find(isReadyAgent)?.id ?? "" : "";
+	}).find((candidate) => isReadyAgent(candidate) && !isHiddenHarness(candidate.id))?.id ?? "" : "";
 	// A Cloud project without an agent of its own starts with the first agent this
 	// account has connected, shown in the picker, never one picked out of sight.
 	const readyCloudAgent = isCloudProject && cloudConnectionsQuery.isSuccess ? buildRankedAgentOptions({
@@ -633,15 +638,17 @@ export function useTaskLaunch({ projectId, hostId }: {
 		priorityRank: DEFAULT_AGENT_PRIORITY_RANK,
 		fallbackAgents: [],
 	}).find(isReadyAgent)?.id ?? "" : "";
+	const visibleProjectAgent = configuredProjectAgent && !isHiddenHarness(configuredProjectAgent) ? configuredProjectAgent : "";
 	const configuredDefaultAgent = isStandalone ? readyFallbackAgent
-		: configuredProjectAgent || (isCloudProject ? readyCloudAgent : readyFallbackAgent);
+		: visibleProjectAgent || (isCloudProject ? readyCloudAgent : readyFallbackAgent);
 	const rememberedAgent = persistedPreferences?.lastAgent ?? "";
 	const availableAgents = isCloudProject ? cloudAgents : agentCatalog?.agents;
 	const rememberedAgentIsAvailable = Boolean(
-		availableAgents?.some((candidate) => candidate.id === rememberedAgent && (hostId ? isLaunchableAgent(candidate) : isReadyAgent(candidate))),
+		!isHiddenHarness(rememberedAgent)
+		&& availableAgents?.some((candidate) => candidate.id === rememberedAgent && (hostId ? isLaunchableAgent(candidate) : isReadyAgent(candidate))),
 	);
 	const defaultWorkerAgent = rememberedAgentIsAvailable ? rememberedAgent : configuredDefaultAgent;
-	const selectedAgent = agent || defaultWorkerAgent;
+	const selectedAgent = (agent && !isHiddenHarness(agent) ? agent : "") || defaultWorkerAgent;
 	const accountProvider = agentAccountProviderFor(selectedAgent);
 	const accountId = accountProvider && !isCloudProject ? accountPicks[accountProvider] : undefined;
 	// The connection a cloud task with this agent runs on; its catalog follows it.
@@ -939,6 +946,19 @@ export function useTaskLaunch({ projectId, hostId }: {
 				(modelCatalog.allowCustom || catalogModels.some((item) => item.id === rememberedModel)),
 		);
 	const projectModelIsValid = isConcreteModelID(projectModelForSelectedAgent) && !cloudModelUnavailable(projectModelForSelectedAgent);
+	// User-configured per-harness default model (local/remote hosts only).
+	const configuredHarnessDefaultModel = !isCloudProject
+		? settings?.harnessDefaults?.[selectedAgent]?.defaultModel?.trim() ?? ""
+		: "";
+	const harnessDefaultModelIsValid =
+		!isCloudProject &&
+		!catalogUsesModes &&
+		isConcreteModelID(configuredHarnessDefaultModel) &&
+		!catalogModels.some((item) => item.id === configuredHarnessDefaultModel && !isModelSelectable(item)) &&
+		Boolean(
+			modelCatalog &&
+				(modelCatalog.allowCustom || catalogModels.some((item) => item.id === configuredHarnessDefaultModel)),
+		);
 	// The orchestrator's model, unless the picker shows it as one that cannot be picked.
 	const orchestratorModelIsValid = orchestratorModelForSelectedAgent !== "" &&
 		!catalogModels.some((item) => item.id === orchestratorModelForSelectedAgent && !isModelSelectable(item));
@@ -947,16 +967,22 @@ export function useTaskLaunch({ projectId, hostId }: {
 	// A model is always selected: the provider's default, else the first one listed.
 	// A cloud task starts on the project's or the agent's default unless one is chosen.
 	const catalogPick = isCloudProject ? "" : catalogDefaultOption || selectableModels[0]?.id || "";
-	// The user's pick for this project and agent, else the project's worker
-	// model, else the model its Cloud orchestrator runs now.
-	const defaultModelForSelectedAgent =
-		(rememberedModelIsValid ? rememberedModel : "") ||
-		(projectModelIsValid ? projectModelForSelectedAgent : "") ||
-		(orchestratorModelIsValid ? orchestratorModelForSelectedAgent : "") ||
-		(!catalogUsesModes && isConcreteModelID(lastUsedOption) ? lastUsedOption : "") ||
-		(catalogUsesModes ? "" : catalogDefaultOption) ||
-		claudeFallbackOption ||
-		(catalogUsesModes ? "" : catalogPick);
+	// When a per-harness default model is configured, precedence is:
+	// project config > explicit selection > harness default model > CLI native default
+	// (never overridden by remembered or last-used models).
+	const defaultModelForSelectedAgent = harnessDefaultModelIsValid
+		? (projectModelIsValid ? projectModelForSelectedAgent : "") ||
+			configuredHarnessDefaultModel ||
+			catalogDefaultOption ||
+			claudeFallbackOption ||
+			catalogPick
+		: (rememberedModelIsValid ? rememberedModel : "") ||
+			(projectModelIsValid ? projectModelForSelectedAgent : "") ||
+			(orchestratorModelIsValid ? orchestratorModelForSelectedAgent : "") ||
+			(!catalogUsesModes && isConcreteModelID(lastUsedOption) ? lastUsedOption : "") ||
+			(catalogUsesModes ? "" : catalogDefaultOption) ||
+			claudeFallbackOption ||
+			(catalogUsesModes ? "" : catalogPick);
 	const defaultModeForSelectedAgent =
 		(rememberedModeIsValid ? rememberedMode : "") ||
 		(isConcreteModelID(projectModeForSelectedAgent) && !isCloudProject ? projectModeForSelectedAgent : "") ||
@@ -1147,8 +1173,12 @@ export function useTaskLaunch({ projectId, hostId }: {
 	// a cloud project must not linger as its error.
 	// Scratchpad has no project agent to fall back to: with no ready agent, or no agent
 	// list at all, a send could never start, so it says why at once.
+	const allReadyAgentsHidden = !isCloudProject
+		&& selectedAgent === ""
+		&& Boolean(agentCatalog?.agents.some((candidate) => (hostId ? isLaunchableAgent(candidate) : isReadyAgent(candidate))));
 	const standaloneAgentError = !isCloudProject && selectedAgent === ""
-		? agentsQuery.error instanceof Error ? agentsQuery.error.message : agentsQuery.isSuccess ? t("newTask.noReadyAgent") : undefined
+		? agentsQuery.error instanceof Error ? agentsQuery.error.message
+			: agentsQuery.isSuccess ? t(allReadyAgentsHidden ? "newTask.allAgentsHidden" : "newTask.noReadyAgent") : undefined
 		: isCloudProject && selectedAgent === "" && cloudConnectionsQuery.isSuccess ? t("newTask.noReadyAgent") : undefined;
 	// Scratchpad never reads a project, but its disabled query still sees an entry
 	// another view cached under the same key, so that entry's error is not its own.
@@ -1434,11 +1464,12 @@ export function useTaskLaunch({ projectId, hostId }: {
 			priorityRank: DEFAULT_AGENT_PRIORITY_RANK,
 			fallbackAgents: AGENT_OPTIONS.map((agent) => unknownAgentReadiness(agent, agentLabel(agent))),
 		});
-		if (!agents) return ranked.map(({ id, label }) => ({ id, label }));
+		if (!agents) return ranked.filter((agent) => !isHiddenHarness(agent.id)).map(({ id, label }) => ({ id, label }));
 		const runs = hostId ? isLaunchableAgent : startsLocally;
 		const offeredForSetup = (agent: AgentInfo) => !isCloudProject
 			&& ((CHAT_SWITCH_TARGETS as readonly string[]).includes(agent.id) || agent.authentication.state === "unauthorized");
 		return ranked.flatMap((agent) => {
+			if (isHiddenHarness(agent.id)) return [];
 			if (runs(agent)) return [{ id: agent.id, label: agent.label }];
 			if (!offeredForSetup(agent)) return [];
 			const unavailable = agent.installation.state === "not_installed" ? t("agentSwitch.notInstalled")
@@ -1446,7 +1477,7 @@ export function useTaskLaunch({ projectId, hostId }: {
 				: t("agentSelector.needsSetup");
 			return [{ id: agent.id, label: agent.label, unavailable }];
 		});
-	}, [agentCatalog?.agents, cloudAgents, hostId, isCloudProject, t]);
+	}, [agentCatalog?.agents, cloudAgents, hostId, isCloudProject, isHiddenHarness, t]);
 	const catalogProjectId = isCloudProject || isStandalone ? "" : projectId ?? "";
 	// A pick from the picker's other agents: that agent, with the model and effort chosen
 	// alongside it, if any. Its catalog is cached, since the picker lists its models.
@@ -1484,7 +1515,7 @@ export function useTaskLaunch({ projectId, hostId }: {
 		...catalogModels.map((item) => ({
 			id: item.id,
 			displayName: item.id === "auto" ? t("settings.models.autoRouteLabel") : catalogUsesModes ? modelChoiceLabel(item) : item.label,
-			default: Boolean(item.isDefault),
+			default: harnessDefaultModelIsValid ? item.id === configuredHarnessDefaultModel : Boolean(item.isDefault),
 			efforts: item.efforts,
 			defaultEffort: item.defaultEffort,
 			...(orchestratorModelHint?.id === item.id ? { hint: orchestratorModelHint.label } : {}),
@@ -1492,7 +1523,7 @@ export function useTaskLaunch({ projectId, hostId }: {
 		...(unlistedProjectModel !== "" && !catalogModels.some((item) => item.id === unlistedProjectModel)
 			? [{ id: unlistedProjectModel, displayName: unlistedProjectModel, default: false, hint: pinnedNote }]
 			: []),
-	], [catalogModels, catalogUsesModes, orchestratorModelHint?.id, orchestratorModelHint?.label, pinnedNote, t, unlistedProjectModel]);
+	], [catalogModels, catalogUsesModes, configuredHarnessDefaultModel, harnessDefaultModelIsValid, orchestratorModelHint?.id, orchestratorModelHint?.label, pinnedNote, t, unlistedProjectModel]);
 	const turnSettings: TurnSettings = {
 		model: (selectedModel || selectedMode) || undefined,
 		reasoningEffort: showEffort ? effectiveEffort || undefined : undefined,
@@ -1568,7 +1599,7 @@ export function useTaskLaunch({ projectId, hostId }: {
 		} : undefined,
 		remoteLoadError,
 		// "Set one up in Settings" gets the way there. A remote host's agents are set up on that host.
-		remoteLoadErrorAction: !hostId && remoteLoadError === t("newTask.noReadyAgent") ? {
+		remoteLoadErrorAction: !hostId && (remoteLoadError === t("newTask.noReadyAgent") || remoteLoadError === t("newTask.allAgentsHidden")) ? {
 			label: t("newTask.openHarnessSettings", { defaultValue: "Open Agents settings" }),
 			onClick: () => openGlobalSettings("harness", { harnessView: isCloudProject ? "cloud" : "local", preserveProject: true }),
 		} : undefined,
@@ -1582,7 +1613,7 @@ export function useTaskLaunch({ projectId, hostId }: {
 			label: t("newTask.agent"),
 			placeholder: t("newTask.selectAgent"),
 			value: selectedAgent,
-			agents: isCloudProject ? cloudAgents : agentCatalog?.agents,
+			agents: isCloudProject ? cloudAgents : agentCatalog?.agents.filter((candidate) => !isHiddenHarness(candidate.id)),
 			disabled:
 				isSubmitting || (!isCloudProject && agentsQuery.isFetching && agentCatalog === undefined),
 			onChange: changeAgent,

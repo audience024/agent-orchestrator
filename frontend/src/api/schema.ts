@@ -5217,7 +5217,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Choose which models one harness's pickers offer */
+        /** Update one harness's picker preferences */
         patch: operations["updateHarnessDefault"];
         trace?: never;
     };
@@ -7842,7 +7842,9 @@ export interface components {
             repoPath: string;
         };
         HarnessDefault: {
+            defaultModel?: string;
             disabledModels?: string[];
+            hidden?: boolean;
         };
         IdentityResponse: {
             apiVersion: number;
@@ -10043,7 +10045,9 @@ export interface components {
             enabled: null | boolean;
         };
         UpdateHarnessDefaultRequest: {
-            disabledModels: null | string[];
+            defaultModel?: null | string;
+            disabledModels?: null | string[];
+            hidden?: null | boolean;
         };
         UpdateProjectSettingsInput: {
             config: components["schemas"]["ProjectConfig"];

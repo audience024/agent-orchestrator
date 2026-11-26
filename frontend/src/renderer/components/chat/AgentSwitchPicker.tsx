@@ -255,13 +255,31 @@ export function AgentModelPicker({
 	// The agents to offer before a session exists, in place of the chat switch targets.
 	const choices = agentSwitch.agents;
 	const readiness = useAgentReadinessQuery(true, hostId).data?.agents;
+	const { settings: hostSettings } = useSettings(hostId);
+	// Cloud pickers offer Cloud-hosted agents, never filtered by local harness preferences.
+	const isCloudPicker = Boolean(agentSwitch.cloudOrgId) || agentSwitch.harnessView === "cloud";
+	const isHarnessHidden = useCallback(
+		(id: string) => !isCloudPicker && Boolean(hostSettings?.harnessDefaults?.[id]?.hidden),
+		[hostSettings?.harnessDefaults, isCloudPicker],
+	);
+	// Chat switch targets follow the static priority order and include any extra
+	// Chat-capable harnesses the daemon advertises (e.g. agy).
+	const switchTargets = useMemo<string[]>(() => {
+		if (terminal) return [...TERMINAL_SWITCH_TARGETS];
+		const targets: string[] = [...CHAT_SWITCH_TARGETS];
+		for (const id of hostSettings?.chatHarnesses ?? []) {
+			if (!targets.includes(id)) targets.push(id);
+		}
+		return targets;
+	}, [hostSettings?.chatHarnesses, terminal]);
+	const switchTargetQuery = switchTargets.join(",");
 	// An agent can be ready in a terminal and still miss the adapter its chat
 	// needs (Pi's pi-acp). The daemon checks that without starting anything.
 	const chatUnavailable = useQuery({
-		queryKey: ["chat-unavailable-agents", hostId ?? ""],
+		queryKey: ["chat-unavailable-agents", hostId ?? "", switchTargetQuery],
 		queryFn: async () => {
 			const { data, error } = await clientForSessionHost(hostId).GET("/api/v1/agents/chat/unavailable", {
-				params: { query: { agents: CHAT_SWITCH_TARGETS.join(",") } },
+				params: { query: { agents: switchTargetQuery } },
 			});
 			if (error) throw error;
 			return new Set(data.agents.map((entry) => entry.agent));
@@ -270,34 +288,47 @@ export function AgentModelPicker({
 		staleTime: 60_000,
 	}).data;
 	// Every agent with why it cannot be used, if it cannot, in one fixed order, so picking one never
-	// moves it (on /new a pick changes the running agent at once). Unknown readiness stays usable,
-	// since the daemon checks the target first. The running agent is never marked, and leads the
-	// list only when the list does not name it.
+	// moves it (on /new a pick changes the running agent at once). Locally only installed agents
+	// whose sign-in is confirmed or configured are offered; unconfigured/unknown ones (such as a
+	// failed install probe) stay out of the rail. Remote hosts keep unknown readiness usable since
+	// the daemon checks the target first. The running agent is never marked, and leads the list
+	// only when the list does not name it.
 	const railAgents = useMemo<RailAgent[]>(() => {
 		const listed: RailAgent[] = choices
 			? choices.map((agent) => (agent.id === currentHarness ? { id: agent.id, label: agent.label } : agent))
-			: (terminal ? TERMINAL_SWITCH_TARGETS : CHAT_SWITCH_TARGETS).map((id) => {
+			: switchTargets.map((id) => {
 				const agent = readiness?.find((candidate) => candidate.id === id);
 				const label = agentLabel(id) !== id ? agentLabel(id) : agent?.label ?? id;
-				if (id === currentHarness) return { id: id as string, label };
+				if (id === currentHarness) return { id, label };
+				const locallyUsable = !agent
+					|| (agent.installation.state === "installed"
+						&& (agent.authentication.state === "authorized"
+							|| agent.authentication.state === "not_applicable"
+							|| agent.authentication.state === "configured"));
 				const unavailable = agent?.installation.state === "not_installed" ? t("agentSwitch.notInstalled")
 					: agent?.authentication.state === "unauthorized" ? t("agentSwitch.notSignedIn")
+					: !hostId && !locallyUsable ? t("agentSelector.needsSetup")
 					: !terminal && chatUnavailable?.has(id) ? t("agentSwitch.chatUnavailable")
 					: undefined;
-				return { id: id as string, label, unavailable };
+				return { id, label, unavailable };
 			});
 		const ordered = [...listed.filter((agent) => !agent.unavailable), ...listed.filter((agent) => agent.unavailable)];
-		return ordered.some((agent) => agent.id === currentHarness)
+		return !currentHarness || ordered.some((agent) => agent.id === currentHarness)
 			? ordered
 			: [{ id: currentHarness, label: agentLabel(currentHarness) }, ...ordered];
-	}, [chatUnavailable, choices, currentHarness, readiness, t, terminal]);
-	// Only agents that can be used are on the rail: one that is not installed, not signed in or has
-	// no chat here is left out rather than dimmed. The running agent and a pending one stay, so the
-	// rail never loses its selection: a pending agent that stops being usable (its readiness arrives
-	// after the pick) shows dimmed with the reason, opens its setup, and offers no model to pick.
+	}, [chatUnavailable, choices, currentHarness, hostId, readiness, switchTargets, t, terminal]);
+	// Only agents that can be used and are not hidden are on the rail: one that is not installed,
+	// not signed in, has no chat here, or was hidden in settings is left out. The running agent and
+	// a pending one stay, so the rail never loses its selection: a pending agent that stops being
+	// usable (its readiness arrives after the pick) shows dimmed with the reason, opens its setup,
+	// and offers no model to pick.
 	const agents = useMemo(
-		() => railAgents.filter((agent) => !agent.unavailable || agent.id === currentHarness || agent.id === pending?.harness),
-		[railAgents, currentHarness, pending?.harness],
+		() => railAgents.filter((agent) =>
+			agent.id === currentHarness
+			|| agent.id === pending?.harness
+			|| (!agent.unavailable && !isHarnessHidden(agent.id)),
+		),
+		[railAgents, currentHarness, pending?.harness, isHarnessHidden],
 	);
 	const management = useAgentManagementMenu(undefined, hostId, agentSwitch.harnessView);
 	const [open, setOpen] = useState(false);
@@ -310,11 +341,12 @@ export function AgentModelPicker({
 		? variantSource(current.models, current.modelId, current.modelLabel, current.onPickModel && ((variant) => current.onPickModel?.(variant.id)), t)
 		: listsModelVariants(currentHarness) ? { ...current, models: groupModelsByVendor(current.models) }
 		: nameSharedModels(current);
-	const { settings: hostSettings } = useSettings(hostId);
 	// The agent's list is shared by every session, so it names the saved model at once.
 	// No saved model means the agent's own default, which Claude Code leaves unset.
 	const savedCatalog = useQuery({ ...catalogOptions(currentHarness), enabled: Boolean(loadingModels) }).data;
 	// Until the agent reports its own models, its list fills the menu; picks wait for the agent.
+	const configuredDefaultModel = (harness: string) =>
+		isCloudPicker ? undefined : hostSettings?.harnessDefaults?.[harness]?.defaultModel?.trim() || undefined;
 	const starting = loadingModels && savedCatalog && !current.models.some((model) => model.id)
 		? otherAgentSource(
 			currentHarness,
@@ -322,6 +354,7 @@ export function AgentModelPicker({
 			savedModel ? { harness: currentHarness, model: savedModel } : undefined,
 			() => {},
 			t,
+			configuredDefaultModel(currentHarness),
 		)
 		: undefined;
 	const currentSource: PickerSource = disabled || starting
@@ -346,6 +379,7 @@ export function AgentModelPicker({
 			[held?.model],
 		),
 		held, onPendingChange, t,
+		configuredDefaultModel(harness),
 	);
 	// The rows below always describe who answers next: the pending agent, or the running one.
 	const shownHarness = pending?.harness ?? currentHarness;
@@ -777,7 +811,9 @@ function AgentRail({ agents, selected, blockedReason, onPick, onSetup, onManage 
 						if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
 					}}
 				>
-					{agents.map((agent, index) => {
+					{agents.length === 0 ? (
+						<span className="truncate px-1.5 text-xs text-muted-foreground">{t("agentSwitch.allHidden")}</span>
+					) : agents.map((agent, index) => {
 						const checked = agent.id === selected;
 						const blocked = blockedReason(agent.id);
 						const reason = agent.unavailable ?? blocked;
@@ -811,7 +847,7 @@ function AgentRail({ agents, selected, blockedReason, onPick, onSetup, onManage 
 				</div>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<Button variant="quiet" size="icon-xs" tabIndex={-1} data-rail-gear aria-label={t("agentSelector.manage")} aria-describedby={undefined} onClick={onManage}>
+						<Button variant="quiet" size="icon-xs" tabIndex={agents.length === 0 ? 0 : -1} data-rail-gear aria-label={t("agentSelector.manage")} aria-describedby={undefined} onClick={onManage}>
 							<Settings2 aria-hidden="true" className="size-icon-sm" />
 						</Button>
 					</TooltipTrigger>
@@ -905,14 +941,19 @@ function otherAgentSource(
 	pending: PendingAgentSwitch | undefined,
 	onPick: (next: PendingAgentSwitch) => void,
 	t: TFunction,
+	configuredDefaultModel?: string,
 ): PickerSource {
-	const listed = nameSharedLabels((catalog ?? [])
-		.filter((model) => !/^\[|\s/.test(model.id))
+	const rawListed = (catalog ?? []).filter((model) => !/^\[|\s/.test(model.id));
+	const effectiveDefaultId = configuredDefaultModel
+		&& rawListed.some((model) => model.id === configuredDefaultModel && !model.unavailableReason)
+		? configuredDefaultModel
+		: rawListed.find((model) => model.isDefault)?.id;
+	const listed = nameSharedLabels(rawListed
 		.map((model) => ({
 			id: model.id,
 			label: readableModelLabel(agentModelDisplayLabel(harness, model.label)),
 			group: modelGroupLabel(model.provider, harness),
-			hint: model.isDefault ? "default" : undefined,
+			hint: model.id === effectiveDefaultId ? "default" : undefined,
 			unavailableReason: model.unavailableReason,
 		})));
 	if (listsModelVariants(harness)) {
@@ -923,7 +964,9 @@ function otherAgentSource(
 	}
 	const chosen = pending ? pending.model ?? "" : undefined;
 	// Effort levels belong to a model. With none picked they are the default's.
-	const effortSource = catalog?.find((model) => (chosen ? model.id === chosen : model.isDefault)) ?? catalog?.[0];
+	const effortSource = catalog?.find((model) => (chosen ? model.id === chosen : model.id === effectiveDefaultId))
+		?? catalog?.find((model) => model.isDefault)
+		?? catalog?.[0];
 	const defaultEffort = effortSource?.defaultEffort;
 	const offersFast = Boolean(effortSource?.supportsFast);
 	const fastOn = offersFast && Boolean(pending?.fastMode);

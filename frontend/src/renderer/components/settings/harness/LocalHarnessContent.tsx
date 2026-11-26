@@ -35,6 +35,7 @@ import {
 	type InstallJob,
 } from "../../../hooks/useHarnessUpdates";
 import { useInvalidateProviderKeys, useProviderKeys } from "../../../hooks/useProviderKeys";
+import { useSettings, useUpdateHarnessDefault } from "../../../hooks/useSettings";
 import { shellTerminalsQueryKeyForHost, type ShellTerminal } from "../../../hooks/useShellTerminals";
 import { AgentCheckError } from "../../../lib/agent-check-error";
 import { agentLoginKey, isAgentLoginPending, pendingAgentLogins, subscribeAgentLogins } from "../../../lib/agent-login-lifecycle";
@@ -50,6 +51,7 @@ import { AgentAvatar } from "../../AgentAvatar";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { Button } from "../../ui/button";
 import { Pressable } from "../../ui/pressable";
+import { Switch } from "../../ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import { describeHarness, supportsUpdate, type AgentAuthState, type AgentOperation, type HarnessDetails, type OperationAttempt } from "./describe-harness";
 import { HarnessAccountTab } from "./HarnessAccountTab";
@@ -110,6 +112,25 @@ export function LocalHarnessContent({ focusAgentId, hostId, search, onDetailChan
 	const authPlans = useAgentAuthPlans(hostId);
 	const startAgentAuth = useStartAgentAuth(hostId);
 	const startAgentLogout = useStartAgentAuth(hostId, "logout");
+	const { settings } = useSettings(hostId);
+	const { update: updateHarnessDefault, error: visibilityError } = useUpdateHarnessDefault(hostId);
+	const [hiddenDrafts, setHiddenDrafts] = useState<Partial<Record<AgentId, boolean>>>({});
+	const visibilitySaveQueue = useRef<Promise<unknown>>(Promise.resolve());
+	const visibilityQueuedSaves = useRef(0);
+	const isHarnessHidden = (agentId: AgentId) => hiddenDrafts[agentId] ?? Boolean(settings?.harnessDefaults?.[agentId]?.hidden);
+	const setHarnessVisible = (agentId: AgentId, visible: boolean) => {
+		const hidden = !visible;
+		setHiddenDrafts((current) => ({ ...current, [agentId]: hidden }));
+		visibilityQueuedSaves.current += 1;
+		// Serialize clicks so an earlier toggle never lands after a later one.
+		visibilitySaveQueue.current = visibilitySaveQueue.current
+			.then(() => updateHarnessDefault({ agentId, hidden }))
+			.catch(() => undefined)
+			.finally(() => {
+				visibilityQueuedSaves.current -= 1;
+				if (visibilityQueuedSaves.current === 0) setHiddenDrafts({});
+			});
+	};
 	const [logoutRequest, setLogoutRequest] = useState<AgentId | null>(null);
 	// An update that cannot run alongside open sessions lists the ones it waits for.
 	const [inUseSessions, setInUseSessions] = useState<{ agentId: AgentId; inUse: HarnessInUse } | null>(null);
@@ -982,6 +1003,7 @@ export function LocalHarnessContent({ focusAgentId, hostId, search, onDetailChan
 							const localUpdate = details.isInstalled && details.updateAvailable;
 							const cloudUpdate = Boolean(cloudSide?.details?.actionable);
 							const selected = split && selectedAgentId === agentId;
+							const hidden = isHarnessHidden(agentId);
 							const statusId = `harness-list-status-${agentId}`;
 							return <Pressable key={agentId}
 								aria-label={t("settings.harness.openDetails", { agent: agentLabel(agentId) })}
@@ -999,10 +1021,11 @@ export function LocalHarnessContent({ focusAgentId, hostId, search, onDetailChan
 								onClick={() => openDetail(agentId)}
 							>
 								{/* sr-only is absolutely positioned: the list is `relative` so these stay inside its scroll box instead of stretching the app shell. */}
-								<span id={statusId} className="sr-only">{details.statusLabel}</span>
+								<span id={statusId} className="sr-only">{hidden ? `${details.statusLabel} · ${t("settings.harness.hiddenBadge")}` : details.statusLabel}</span>
 								{/* Not-installed harnesses stay in place but recede. */}
-								<AgentAvatar className={cn("shrink-0", split ? "size-5" : "size-6", !details.isInstalled && "opacity-45 grayscale")} decorative provider={agentId} />
-								<span className={cn("min-w-0 flex-1 truncate text-sm", details.isInstalled || selected ? "text-settings-label" : "text-settings-muted")}>{agentLabel(agentId)}</span>
+								<AgentAvatar className={cn("shrink-0", split ? "size-5" : "size-6", (!details.isInstalled || hidden) && "opacity-45 grayscale")} decorative provider={agentId} />
+								<span className={cn("min-w-0 flex-1 truncate text-sm", (details.isInstalled || selected) && !hidden ? "text-settings-label" : "text-settings-muted")}>{agentLabel(agentId)}</span>
+								{hidden ? <span className="shrink-0 rounded-sm bg-(--color-bg-settings-input) px-1.5 py-0.5 text-caption text-settings-muted">{t("settings.harness.hiddenBadge")}</span> : null}
 								{/* One status slot: progress replaces the update icon while an install, update or login runs. */}
 								{/* AO Cloud's side shares it: one mark per harness, whichever places it covers. */}
 								{details.busy || cloudSide?.pending ? <span role="status" className="flex size-4 shrink-0 items-center justify-center"><LoaderCircle className="size-4 animate-spin text-settings-muted" aria-hidden="true" /><span className="sr-only">{details.busy ? details.progressLabel : t("settings.harness.updating")}</span></span>
@@ -1039,7 +1062,16 @@ export function LocalHarnessContent({ focusAgentId, hostId, search, onDetailChan
 							<AgentAvatar className="size-7 shrink-0" decorative provider={selectedDetails.agentId} />
 							{/* Pane title: one step above row labels (15px), below the page heading. */}
 							<span className="min-w-0 flex-1 text-subtitle font-semibold leading-6 text-settings-label" id={`harness-agent-${selectedDetails.agentId}`}>{agentLabel(selectedDetails.agentId)}</span>
+							<label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-settings-muted">
+								<span>{t("settings.harness.showInPickers")}</span>
+								<Switch
+									aria-label={t("settings.harness.toggleVisibility", { agent: agentLabel(selectedDetails.agentId) })}
+									checked={!isHarnessHidden(selectedDetails.agentId)}
+									onCheckedChange={(visible) => setHarnessVisible(selectedDetails.agentId, visible)}
+								/>
+							</label>
 						</div>
+						{visibilityError ? <p role="alert" className="-mt-2 text-xs text-error">{visibilityError}</p> : null}
 						<Tabs className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" value={detailTab === "import" && !importable ? "account" : detailTab} onValueChange={(value) => { if (value !== "account") closeUILogin(); setDetailTab(value as HarnessDetailTab); }}>
 							<TabsList className={HARNESS_TABS_CLASS} aria-label={t("settings.harness.detailTabs", { agent: agentLabel(selectedDetails.agentId) })}>
 								<TabsTrigger className={HARNESS_TAB_CLASS} value="account">{t("settings.harness.tabAccount")}</TabsTrigger>

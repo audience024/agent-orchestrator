@@ -5507,5 +5507,15 @@
 	"backgroundTasks.stale": "stale",
 	"backgroundTasks.kind.shell": "Shell",
 	"backgroundTasks.kind.other": "Background task",
-	"backgroundTasks.state.failed": "Failed"
+	"backgroundTasks.state.failed": "Failed",
+	"agentSwitch.allHidden": "All agents hidden",
+	"newTask.allAgentsHidden": "All available agents are hidden in Settings.",
+	"settings.harness.showInPickers": "Show in pickers",
+	"settings.harness.toggleVisibility": "Show {{agent}} in agent and model pickers",
+	"settings.harness.hiddenBadge": "Hidden",
+	"settings.harness.models.harnessHiddenHint": "{{agent}} is hidden from pickers. Existing sessions are unaffected.",
+	"settings.harness.models.setDefault": "Set as default",
+	"settings.harness.models.setDefaultAria": "Set {{model}} as default",
+	"settings.harness.models.resetDefault": "Reset default",
+	"settings.harness.models.resetDefaultAria": "Reset default model for {{agent}}"
 }

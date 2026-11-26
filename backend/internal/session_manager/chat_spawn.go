@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
@@ -239,6 +240,11 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	agentConfig := in.cfg.AgentConfig
 	if !in.cfg.AgentConfigResolved {
 		agentConfig = applySpawnAgentConfig(effectiveAgentConfig(in.cfg.Harness, in.cfg.Kind, in.project.Config), in.cfg.AgentConfig)
+		if strings.TrimSpace(agentConfig.Model) == "" {
+			if fallback := m.defaultModelForHarness(ctx, in.cfg.Harness); fallback != "" {
+				agentConfig.Model = fallback
+			}
+		}
 	}
 
 	var diffBaseSHA, diffBaseRef string
@@ -498,6 +504,19 @@ func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message, cl
 // SessionModeDefaults supplies the daemon-owned default session interface.
 type SessionModeDefaults interface {
 	DefaultSessionMode(ctx context.Context) domain.SessionMode
+}
+
+// harnessModelDefaults optionally supplies a user-configured default model per harness.
+type harnessModelDefaults interface {
+	DefaultModelForHarness(ctx context.Context, harness domain.AgentHarness) string
+}
+
+func (m *Manager) defaultModelForHarness(ctx context.Context, harness domain.AgentHarness) string {
+	provider, ok := m.defaults.(harnessModelDefaults)
+	if !ok || provider == nil {
+		return ""
+	}
+	return strings.TrimSpace(provider.DefaultModelForHarness(ctx, harness))
 }
 
 // resolveSessionMode applies startSessionMode with the daemon-owned default,

@@ -5874,5 +5874,15 @@
 	"device.options": "Параметры устройства",
 	"device.screenAlt": "Экран {{name}}",
 	"device.connecting": "Подключение…",
-	"device.reconnecting": "Повторное подключение…"
+	"device.reconnecting": "Повторное подключение…",
+	"agentSwitch.allHidden": "Все агенты скрыты",
+	"newTask.allAgentsHidden": "Все доступные агенты скрыты в настройках.",
+	"settings.harness.showInPickers": "Показывать в списках выбора",
+	"settings.harness.toggleVisibility": "Показывать {{agent}} в списках выбора агентов и моделей",
+	"settings.harness.hiddenBadge": "Скрыт",
+	"settings.harness.models.harnessHiddenHint": "{{agent}} скрыт из списков выбора. Существующие сеансы не затронуты.",
+	"settings.harness.models.setDefault": "По умолчанию",
+	"settings.harness.models.setDefaultAria": "Сделать {{model}} моделью по умолчанию",
+	"settings.harness.models.resetDefault": "Сбросить",
+	"settings.harness.models.resetDefaultAria": "Сбросить модель по умолчанию для {{agent}}"
 }

@@ -15906,7 +15906,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Choose which models one harness's pickers offer
+      summary: Update one harness's picker preferences
       tags:
       - settings
   /api/v1/settings/session-interface:
@@ -22640,11 +22640,15 @@ components:
       type: object
     HarnessDefault:
       properties:
+        defaultModel:
+          type: string
         disabledModels:
           items:
             type: string
           maxItems: 20000
           type: array
+        hidden:
+          type: boolean
       type: object
     IdentityResponse:
       properties:
@@ -28299,6 +28303,10 @@ components:
       type: object
     UpdateHarnessDefaultRequest:
       properties:
+        defaultModel:
+          type:
+          - "null"
+          - string
         disabledModels:
           items:
             type: string
@@ -28306,8 +28314,10 @@ components:
           type:
           - "null"
           - array
-      required:
-      - disabledModels
+        hidden:
+          type:
+          - "null"
+          - boolean
       type: object
     UpdateProjectSettingsInput:
       properties:

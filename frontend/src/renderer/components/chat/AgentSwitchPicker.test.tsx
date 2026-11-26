@@ -11,9 +11,15 @@ import { AgentModelPicker, type AccountChoice, type PendingAgentSwitch, type Pic
 
 const unavailableGet = vi.hoisted(() => vi.fn());
 const readiness = vi.hoisted(() => ({ agents: [] as unknown[] }));
+const mockSettings = vi.hoisted(() => ({
+	value: undefined as {
+		chatHarnesses?: string[];
+		harnessDefaults?: Record<string, { disabledModels?: string[]; defaultModel?: string; hidden?: boolean }>;
+	} | undefined,
+}));
 vi.mock("../../lib/host-clients", () => ({ clientForSessionHost: () => ({ GET: unavailableGet }) }));
 vi.mock("../../hooks/useAgentReadinessQuery", () => ({ useAgentReadinessQuery: () => ({ data: { agents: readiness.agents } }) }));
-vi.mock("../../hooks/useSettings", () => ({ useSettings: () => ({ settings: undefined }) }));
+vi.mock("../../hooks/useSettings", () => ({ useSettings: () => ({ settings: mockSettings.value }) }));
 const cloudModels = vi.hoisted(() => vi.fn());
 vi.mock("../../hooks/useCloudCp", () => ({
 	useCloudCp: () => ({ ready: true, baseUrl: "https://cp.test", userId: "user-1", client: { listUserAgentModels: cloudModels } }),
@@ -73,6 +79,7 @@ describe("AgentModelPicker", () => {
 		useUiStore.setState({ developerMode: false });
 		unavailableGet.mockReset().mockResolvedValue({ data: { agents: [] }, error: undefined });
 		readiness.agents = [];
+		mockSettings.value = undefined;
 		window.localStorage.clear();
 	});
 
@@ -630,5 +637,110 @@ describe("AgentModelPicker", () => {
 		open(undefined, false, "claude-code", {}, false, false, undefined, two);
 		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
 		expect(screen.getByRole("menuitem", { name: /^Account.*me@work/ })).toBeInTheDocument();
+	});
+
+	it("leaves hidden harnesses out of the rail and cross-agent search", async () => {
+		const user = userEvent.setup();
+		mockSettings.value = { harnessDefaults: { codex: { hidden: true } } };
+		open();
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		const rail = screen.getByRole("radiogroup", { name: "Agents" });
+		expect(within(rail).getByRole("radio", { name: "Claude Code" })).toBeInTheDocument();
+		expect(within(rail).queryByRole("radio", { name: "Codex" })).not.toBeInTheDocument();
+		await user.type(screen.getByPlaceholderText("Search agents and models"), "GPT X");
+		expect(screen.queryByRole("menuitemradio", { name: /GPT X/ })).not.toBeInTheDocument();
+	});
+
+	it("keeps the running and pending harnesses visible even when hidden in settings", async () => {
+		const user = userEvent.setup();
+		mockSettings.value = { harnessDefaults: { "claude-code": { hidden: true }, codex: { hidden: true }, cursor: { hidden: true } } };
+		open({ harness: "codex" }, false, "claude-code");
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		const rail = screen.getByRole("radiogroup", { name: "Agents" });
+		expect(within(rail).getByRole("radio", { name: "Claude Code" })).toBeInTheDocument();
+		expect(within(rail).getByRole("radio", { name: "Codex" })).toBeInTheDocument();
+		expect(within(rail).queryByRole("radio", { name: "Cursor" })).not.toBeInTheDocument();
+	});
+
+	it("does not apply local hidden harness settings to Cloud pickers", async () => {
+		const user = userEvent.setup();
+		mockSettings.value = { harnessDefaults: { codex: { hidden: true } } };
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<AgentModelPicker
+					currentHarness="claude-code"
+					current={{ models: [{ id: "opus", label: "Opus" }], modelId: "opus", modelLabel: "Opus", onPickModel: vi.fn(), efforts: [], onPickEffort: vi.fn() }}
+					agentSwitch={{
+						projectId: "p",
+						cloudOrgId: "org-1",
+						harnessView: "cloud",
+						agents: [{ id: "claude-code", label: "Claude Code" }, { id: "codex", label: "Codex" }],
+						onPendingChange: vi.fn(),
+					}}
+				/>
+			</QueryClientProvider>,
+		);
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		const rail = screen.getByRole("radiogroup", { name: "Agents" });
+		expect(within(rail).getByRole("radio", { name: "Codex" })).toBeInTheDocument();
+	});
+
+	it("keeps the manage agents entry accessible when every agent is hidden", async () => {
+		const user = userEvent.setup();
+		mockSettings.value = { harnessDefaults: { "claude-code": { hidden: true }, codex: { hidden: true } } };
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<AgentModelPicker
+					currentHarness=""
+					current={{ models: [], modelLabel: "Agent", efforts: [] }}
+					agentSwitch={{
+						projectId: "p",
+						agents: [{ id: "claude-code", label: "Claude Code" }, { id: "codex", label: "Codex" }],
+						onPendingChange: vi.fn(),
+					}}
+				/>
+			</QueryClientProvider>,
+		);
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		expect(screen.getByText("All agents hidden")).toBeInTheDocument();
+		const gear = screen.getByRole("button", { name: "Manage agents…" });
+		expect(gear).toHaveAttribute("tabindex", "0");
+	});
+
+	it("omits locally unconfigured agents with unknown readiness and includes daemon chatHarnesses like AGY", async () => {
+		const user = userEvent.setup();
+		mockSettings.value = {
+			chatHarnesses: ["claude-code", "codex", "cursor", "agy", "opencode", "opencode-v2"],
+			harnessDefaults: { pi: { hidden: true } },
+		};
+		readiness.agents = [
+			agentReadiness("claude-code", "Claude Code", { installation: "installed", authentication: "configured" }),
+			agentReadiness("codex", "Codex", { installation: "installed", authentication: "authorized" }),
+			agentReadiness("cursor", "Cursor", { installation: "installed", authentication: "authorized" }),
+			agentReadiness("agy", "AGY", { installation: "installed", authentication: "authorized" }),
+			agentReadiness("pi", "Pi", { installation: "installed", authentication: "authorized" }),
+			agentReadiness("opencode", "OpenCode", { installation: "unknown", authentication: "unknown" }),
+			agentReadiness("opencode-v2", "OpenCode 2", { installation: "unknown", authentication: "unknown" }),
+			agentReadiness("droid", "Droid", { installation: "installed", authentication: "unknown" }),
+		] satisfies AgentReadinessSnapshot[];
+		open();
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		const rail = within(screen.getByRole("radiogroup", { name: "Agents" }));
+		expect(rail.getByRole("radio", { name: "Claude Code" })).toBeInTheDocument();
+		expect(rail.getByRole("radio", { name: "Codex" })).toBeInTheDocument();
+		expect(rail.getByRole("radio", { name: "Cursor" })).toBeInTheDocument();
+		expect(rail.getByRole("radio", { name: "AGY" })).toBeInTheDocument();
+		expect(rail.queryByRole("radio", { name: "OpenCode" })).not.toBeInTheDocument();
+		expect(rail.queryByRole("radio", { name: "OpenCode 2" })).not.toBeInTheDocument();
+		expect(rail.queryByRole("radio", { name: "Droid" })).not.toBeInTheDocument();
+		expect(rail.queryByRole("radio", { name: "Pi" })).not.toBeInTheDocument();
+	});
+
+	it("marks a harness's configured defaultModel as default when switching to it", async () => {
+		const user = userEvent.setup();
+		mockSettings.value = { harnessDefaults: { codex: { defaultModel: "gpt-x" } } };
+		open({ harness: "codex" }, false, "claude-code");
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		expect(await screen.findByRole("menuitemradio", { name: /GPT X.*Default/ })).toBeInTheDocument();
 	});
 });

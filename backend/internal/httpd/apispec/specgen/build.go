@@ -1593,7 +1593,7 @@ func shellTerminalOperations() []operation {
 		},
 		{
 			method: http.MethodPatch, path: "/api/v1/settings/harness-defaults/{agent}", id: "updateHarnessDefault", tag: "settings",
-			summary:    "Choose which models one harness's pickers offer",
+			summary:    "Update one harness's picker preferences",
 			pathParams: []any{controllers.AgentIDParam{}},
 			reqBody:    controllers.UpdateHarnessDefaultRequest{},
 			resps: []respUnit{

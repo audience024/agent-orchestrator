@@ -5527,5 +5527,15 @@
 	"backgroundTasks.stale": "오래된 정보",
 	"backgroundTasks.kind.shell": "셸",
 	"backgroundTasks.kind.other": "백그라운드 작업",
-	"backgroundTasks.state.failed": "실패"
+	"backgroundTasks.state.failed": "실패",
+	"agentSwitch.allHidden": "모든 에이전트가 숨겨짐",
+	"newTask.allAgentsHidden": "사용 가능한 모든 에이전트가 설정에서 숨겨져 있습니다.",
+	"settings.harness.showInPickers": "선택기에 표시",
+	"settings.harness.toggleVisibility": "에이전트 및 모델 선택기에 {{agent}} 표시",
+	"settings.harness.hiddenBadge": "숨김",
+	"settings.harness.models.harnessHiddenHint": "{{agent}}은(는) 선택기에서 숨겨져 있습니다. 기존 세션에는 영향을 주지 않습니다.",
+	"settings.harness.models.setDefault": "기본값으로 설정",
+	"settings.harness.models.setDefaultAria": "{{model}}을(를) 기본 모델로 설정",
+	"settings.harness.models.resetDefault": "기본값 복원",
+	"settings.harness.models.resetDefaultAria": "{{agent}}의 기본 모델 복원"
 }

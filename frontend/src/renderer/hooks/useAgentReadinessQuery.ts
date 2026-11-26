@@ -6,6 +6,7 @@ import { defaultProjectAgents, hasInstalledAgent, preferredAgentNeedsChecks, typ
 import type { components } from "../../api/schema";
 import { apiClient } from "../lib/api-client";
 import { clientForHost } from "../lib/host-clients";
+import { settingsQueryKey, type Settings } from "./useSettings";
 
 export type AgentReadiness = components["schemas"]["AgentReadinessResponse"];
 export type AgentReadinessSnapshot = components["schemas"]["AgentReadinessSnapshot"];
@@ -139,7 +140,11 @@ async function readProjectAgentSnapshotWithDeadline(queryClient: QueryClient, ho
  * it ranks nothing, so the project falls back to AO's default agent.
  */
 export async function loadProjectAgentDefaults(queryClient: QueryClient, hostId?: string): Promise<ProjectAgentDefaults> {
-	return defaultProjectAgents((await readProjectAgentSnapshotWithDeadline(queryClient, hostId)) ?? []);
+	const agents = (await readProjectAgentSnapshotWithDeadline(queryClient, hostId)) ?? [];
+	const settings = queryClient.getQueryData<Settings>(hostId ? ["settings", hostId] : settingsQueryKey);
+	const hidden = settings?.harnessDefaults;
+	const visible = hidden ? agents.filter((agent) => !hidden[agent.id]?.hidden) : agents;
+	return defaultProjectAgents(visible.length > 0 ? visible : agents);
 }
 
 export function useAgentReadinessQuery(enabled = true, hostId?: string) {

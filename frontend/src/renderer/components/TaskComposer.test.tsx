@@ -5021,3 +5021,158 @@ describe("Chat launch permission discovery recovery", () => {
 		expect(delegate.mock.calls[1][0].body.mode).toBe("tui");
 	});
 });
+
+describe("Hidden harness preferences", () => {
+	it("omits hidden harnesses from agentChoices and falls back to the first visible ready agent", async () => {
+		h.agentCatalog = {
+			agents: [
+				agentReadiness("claude-code", "Claude Code"),
+				agentReadiness("codex", "Codex"),
+			],
+		};
+		h.post.mockResolvedValue({ data: {} });
+		h.get.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["claude-code", "codex"],
+						harnessDefaults: { "claude-code": { hidden: true } },
+					},
+				};
+			}
+			if (path.includes("/models")) return { data: { models: [], allowCustom: true, selectionMode: "text" } };
+			return { data: { status: "ok", project: { id: "proj-1", agent: "claude-code", config: { worker: { agent: "claude-code" } } } } };
+		});
+		let task!: ReturnType<typeof useTaskLaunch>;
+		function Launcher() { task = useTaskLaunch({ projectId: "proj-1" }); return null; }
+		render(<Wrap><Launcher /></Wrap>);
+		await waitFor(() => expect(task.agent.value).toBe("codex"));
+		expect(task.agentChoices.map((choice) => choice.id)).toEqual(["codex"]);
+		expect(task.agent.agents?.map((agent) => agent.id)).toEqual(["codex"]);
+	});
+
+	it("reports when every available local agent is hidden and offers Settings", async () => {
+		h.agentCatalog = {
+			agents: [
+				agentReadiness("claude-code", "Claude Code"),
+				agentReadiness("codex", "Codex"),
+			],
+		};
+		h.post.mockResolvedValue({ data: {} });
+		h.get.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["claude-code", "codex"],
+						harnessDefaults: { "claude-code": { hidden: true }, codex: { hidden: true } },
+					},
+				};
+			}
+			if (path.includes("/models")) return { data: { models: [], allowCustom: true, selectionMode: "text" } };
+			return { data: { status: "ok", project: { id: "proj-1", agent: "claude-code", config: {} } } };
+		});
+		let task!: ReturnType<typeof useTaskLaunch>;
+		function Launcher() { task = useTaskLaunch({ projectId: "proj-1" }); return null; }
+		render(<Wrap><Launcher /></Wrap>);
+		await waitFor(() => expect(task.remoteLoadError).toBe("All available agents are hidden in Settings."));
+		expect(task.agentChoices).toEqual([]);
+		expect(task.agent.value).toBe("");
+		expect(task.canSubmit).toBe(false);
+		expect(task.remoteLoadErrorAction?.label).toBe("Open Agents settings");
+	});
+
+	it("keeps Cloud project agents visible even when hidden locally", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(providerConnectionsQueryKey, [
+			{ id: "conn-1", provider: "claude-code", label: "default", validationState: "valid", updatedAt: "2026-10-24T00:00:00Z", config: {} },
+			{ id: "conn-2", provider: "codex", label: "default", validationState: "valid", updatedAt: "2026-10-24T00:00:00Z", config: {} },
+		]);
+		h.cloudProjects = [{
+			id: "cloud-proj-1",
+			displayName: "Cloud Project",
+			repositoryUrl: "https://github.com/acme/repo",
+			defaultBranch: "main",
+			config: { worker: { agent: "claude-code" } },
+		}];
+		h.cloudListProviderConnections.mockReturnValue(new Promise(() => undefined));
+		h.cloudListUserAgentModels.mockResolvedValue({ models: [] });
+		h.post.mockResolvedValue({ data: {} });
+		h.get.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["claude-code", "codex"],
+						harnessDefaults: { "claude-code": { hidden: true }, codex: { hidden: true } },
+					},
+				};
+			}
+			return { data: {} };
+		});
+		let task!: ReturnType<typeof useTaskLaunch>;
+		function Launcher() { task = useTaskLaunch({ projectId: "cloud-proj-1" }); return null; }
+		render(<Wrap queryClient={queryClient}><Launcher /></Wrap>);
+		await waitFor(() => expect(task.agentChoices.map((choice) => choice.id)).toContain("claude-code"));
+		expect(task.agent.value).toBe("claude-code");
+	});
+
+	it("prefers project model over harness default model, and harness default model over remembered/last-used models", async () => {
+		h.agentCatalog = { agents: [agentReadiness("codex", "Codex")] };
+		h.post.mockResolvedValue({ data: {} });
+		window.localStorage.setItem("ao.taskComposer.preferences.v1", JSON.stringify({
+			"local:proj-1": { lastAgent: "codex", agents: { codex: { model: "gpt-remembered" } } },
+			"local:proj-2": { lastAgent: "codex", agents: { codex: { model: "gpt-remembered" } } },
+		}));
+		h.get.mockImplementation(async (path: string, options?: { params?: { path?: { id?: string } } }) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["codex"],
+						harnessDefaults: { codex: { defaultModel: "gpt-harness-default" } },
+					},
+				};
+			}
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "catalog",
+						models: [
+							{ id: "gpt-native", label: "GPT Native", isDefault: true, efforts: [] },
+							{ id: "gpt-harness-default", label: "GPT Harness Default", efforts: [] },
+							{ id: "gpt-remembered", label: "GPT Remembered", lastUsedAt: "2026-11-26T00:00:00Z", efforts: [] },
+							{ id: "gpt-project", label: "GPT Project", efforts: [] },
+						],
+					},
+				};
+			}
+			const id = options?.params?.path?.id ?? "proj-1";
+			return {
+				data: {
+					status: "ok",
+					project: id === "proj-2"
+						? { id: "proj-2", agent: "codex", config: { worker: { agent: "codex", agentConfig: { model: "gpt-project" } } } }
+						: { id: "proj-1", agent: "codex", config: { worker: { agent: "codex" } } },
+				},
+			};
+		});
+
+		// Without project model: harness default wins over remembered and CLI native default.
+		let task1!: ReturnType<typeof useTaskLaunch>;
+		function Launcher1() { task1 = useTaskLaunch({ projectId: "proj-1" }); return null; }
+		const r1 = render(<Wrap><Launcher1 /></Wrap>);
+		await waitFor(() => expect(task1.model.value).toBe("gpt-harness-default"));
+		expect(task1.chatModels.find((m) => m.id === "gpt-harness-default")?.default).toBe(true);
+		expect(task1.chatModels.find((m) => m.id === "gpt-native")?.default).toBe(false);
+		r1.unmount();
+
+		// With project model: project config wins over harness default and remembered.
+		let task2!: ReturnType<typeof useTaskLaunch>;
+		function Launcher2() { task2 = useTaskLaunch({ projectId: "proj-2" }); return null; }
+		render(<Wrap><Launcher2 /></Wrap>);
+		await waitFor(() => expect(task2.model.value).toBe("gpt-project"));
+	});
+});
