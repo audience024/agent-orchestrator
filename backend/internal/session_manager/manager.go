@@ -1942,6 +1942,11 @@ func (m *Manager) resolveAgentConfigOnce(ctx context.Context, cfg ports.SpawnCon
 	base := effectiveAgentConfig(cfg.Harness, cfg.Kind, project)
 	requested := cfg.AgentConfig
 	resolved := applySpawnAgentConfig(base, requested)
+	if strings.TrimSpace(resolved.Model) == "" {
+		if fallback := m.defaultModelForHarness(ctx, cfg.Harness); fallback != "" {
+			resolved.Model = fallback
+		}
+	}
 	modelChangedWithoutExplicitEffort := requested.Model != "" && requested.Model != base.Model &&
 		!cfg.EffortOverride && requested.Effort == ""
 	// Role or project settings may carry a stale Pi or Prime Agent effort that

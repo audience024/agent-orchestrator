@@ -5427,5 +5427,9 @@
 	"settings.harness.showInPickers": "In Auswahlen anzeigen",
 	"settings.harness.toggleVisibility": "{{agent}} in Agenten- und Modellauswahlen anzeigen",
 	"settings.harness.hiddenBadge": "Ausgeblendet",
-	"settings.harness.models.harnessHiddenHint": "{{agent}} ist in Auswahlen ausgeblendet. Bestehende Sitzungen bleiben unverändert."
+	"settings.harness.models.harnessHiddenHint": "{{agent}} ist in Auswahlen ausgeblendet. Bestehende Sitzungen bleiben unverändert.",
+	"settings.harness.models.setDefault": "Als Standard",
+	"settings.harness.models.setDefaultAria": "{{model}} als Standard festlegen",
+	"settings.harness.models.resetDefault": "Standard zurücksetzen",
+	"settings.harness.models.resetDefaultAria": "Standardmodell für {{agent}} zurücksetzen"
 }

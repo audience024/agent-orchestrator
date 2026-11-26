@@ -59,4 +59,23 @@ func TestHarnessDefaultHiddenSerializationAndIsZero(t *testing.T) {
 	if !zero.IsZero() {
 		t.Fatalf("empty disabledModels + hidden=false must be zero: %+v", zero)
 	}
+
+	defaultModelOnly := HarnessDefault{DefaultModel: "gpt-6.2-astra"}
+	if defaultModelOnly.IsZero() {
+		t.Fatal("defaultModel-only HarnessDefault must not be zero")
+	}
+	rawModel, err := json.Marshal(defaultModelOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rawModel) != `{"defaultModel":"gpt-6.2-astra"}` {
+		t.Fatalf("marshal defaultModel-only = %s", rawModel)
+	}
+	var decodedModel HarnessDefault
+	if err := json.Unmarshal(rawModel, &decodedModel); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decodedModel, defaultModelOnly) {
+		t.Fatalf("round-trip defaultModel = %+v, want %+v", decodedModel, defaultModelOnly)
+	}
 }

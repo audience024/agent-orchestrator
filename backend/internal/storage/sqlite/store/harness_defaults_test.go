@@ -65,14 +65,14 @@ func TestHarnessDefaultsPersistHiddenWithoutDisabledModelsAndReset(t *testing.T)
 	}
 
 	// Combining Hidden and DisabledModels persists both.
-	if err := s.SetHarnessDefault(ctx, domain.HarnessPi, domain.HarnessDefault{DisabledModels: []string{"m1"}, Hidden: true}, time.Now()); err != nil {
+	if err := s.SetHarnessDefault(ctx, domain.HarnessPi, domain.HarnessDefault{DisabledModels: []string{"m1"}, DefaultModel: "m2", Hidden: true}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	combined, err := s.GetAppSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := combined.HarnessDefaults["pi"]; !got.Hidden || !slices.Equal(got.DisabledModels, []string{"m1"}) {
+	if got := combined.HarnessDefaults["pi"]; !got.Hidden || got.DefaultModel != "m2" || !slices.Equal(got.DisabledModels, []string{"m1"}) {
 		t.Fatalf("combined entry = %+v", got)
 	}
 

@@ -933,6 +933,19 @@ export function useTaskLaunch({ projectId, hostId }: {
 				(modelCatalog.allowCustom || catalogModels.some((item) => item.id === rememberedModel)),
 		);
 	const projectModelIsValid = isConcreteModelID(projectModelForSelectedAgent) && !cloudModelUnavailable(projectModelForSelectedAgent);
+	// User-configured per-harness default model (local/remote hosts only).
+	const configuredHarnessDefaultModel = !isCloudProject
+		? settings?.harnessDefaults?.[selectedAgent]?.defaultModel?.trim() ?? ""
+		: "";
+	const harnessDefaultModelIsValid =
+		!isCloudProject &&
+		!catalogUsesModes &&
+		isConcreteModelID(configuredHarnessDefaultModel) &&
+		!catalogModels.some((item) => item.id === configuredHarnessDefaultModel && !isModelSelectable(item)) &&
+		Boolean(
+			modelCatalog &&
+				(modelCatalog.allowCustom || catalogModels.some((item) => item.id === configuredHarnessDefaultModel)),
+		);
 	// The orchestrator's model, unless the picker shows it as one that cannot be picked.
 	const orchestratorModelIsValid = orchestratorModelForSelectedAgent !== "" &&
 		!catalogModels.some((item) => item.id === orchestratorModelForSelectedAgent && !isModelSelectable(item));
@@ -941,16 +954,22 @@ export function useTaskLaunch({ projectId, hostId }: {
 	// A model is always selected: the provider's default, else the first one listed.
 	// A cloud task starts on the project's or the agent's default unless one is chosen.
 	const catalogPick = isCloudProject ? "" : catalogDefaultOption || selectableModels[0]?.id || "";
-	// The user's pick for this project and agent, else the project's worker
-	// model, else the model its Cloud orchestrator runs now.
-	const defaultModelForSelectedAgent =
-		(rememberedModelIsValid ? rememberedModel : "") ||
-		(projectModelIsValid ? projectModelForSelectedAgent : "") ||
-		(orchestratorModelIsValid ? orchestratorModelForSelectedAgent : "") ||
-		(!catalogUsesModes && isConcreteModelID(lastUsedOption) ? lastUsedOption : "") ||
-		(catalogUsesModes ? "" : catalogDefaultOption) ||
-		claudeFallbackOption ||
-		(catalogUsesModes ? "" : catalogPick);
+	// When a per-harness default model is configured, precedence is:
+	// project config > explicit selection > harness default model > CLI native default
+	// (never overridden by remembered or last-used models).
+	const defaultModelForSelectedAgent = harnessDefaultModelIsValid
+		? (projectModelIsValid ? projectModelForSelectedAgent : "") ||
+			configuredHarnessDefaultModel ||
+			catalogDefaultOption ||
+			claudeFallbackOption ||
+			catalogPick
+		: (rememberedModelIsValid ? rememberedModel : "") ||
+			(projectModelIsValid ? projectModelForSelectedAgent : "") ||
+			(orchestratorModelIsValid ? orchestratorModelForSelectedAgent : "") ||
+			(!catalogUsesModes && isConcreteModelID(lastUsedOption) ? lastUsedOption : "") ||
+			(catalogUsesModes ? "" : catalogDefaultOption) ||
+			claudeFallbackOption ||
+			(catalogUsesModes ? "" : catalogPick);
 	const defaultModeForSelectedAgent =
 		(rememberedModeIsValid ? rememberedMode : "") ||
 		(isConcreteModelID(projectModeForSelectedAgent) && !isCloudProject ? projectModeForSelectedAgent : "") ||
@@ -1480,11 +1499,11 @@ export function useTaskLaunch({ projectId, hostId }: {
 	const chatModels = useMemo<ChatModel[]>(() => catalogModels.map((item) => ({
 		id: item.id,
 		displayName: item.id === "auto" ? t("settings.models.autoRouteLabel") : catalogUsesModes ? modelChoiceLabel(item) : item.label,
-		default: Boolean(item.isDefault),
+		default: harnessDefaultModelIsValid ? item.id === configuredHarnessDefaultModel : Boolean(item.isDefault),
 		efforts: item.efforts,
 		defaultEffort: item.defaultEffort,
 		...(orchestratorModelHint?.id === item.id ? { hint: orchestratorModelHint.label } : {}),
-	})), [catalogModels, catalogUsesModes, orchestratorModelHint?.id, orchestratorModelHint?.label, t]);
+	})), [catalogModels, catalogUsesModes, configuredHarnessDefaultModel, harnessDefaultModelIsValid, orchestratorModelHint?.id, orchestratorModelHint?.label, t]);
 	const turnSettings: TurnSettings = {
 		model: (selectedModel || selectedMode) || undefined,
 		reasoningEffort: showEffort ? effectiveEffort || undefined : undefined,

@@ -5427,5 +5427,9 @@
 	"settings.harness.showInPickers": "選択リストに表示",
 	"settings.harness.toggleVisibility": "{{agent}} をエージェント・モデル選択に表示",
 	"settings.harness.hiddenBadge": "非表示",
-	"settings.harness.models.harnessHiddenHint": "{{agent}} は選択リストから非表示です。既存のセッションには影響しません。"
+	"settings.harness.models.harnessHiddenHint": "{{agent}} は選択リストから非表示です。既存のセッションには影響しません。",
+	"settings.harness.models.setDefault": "デフォルトに設定",
+	"settings.harness.models.setDefaultAria": "{{model}} をデフォルトに設定",
+	"settings.harness.models.resetDefault": "デフォルトを解除",
+	"settings.harness.models.resetDefaultAria": "{{agent}} のデフォルトモデルを元に戻す"
 }

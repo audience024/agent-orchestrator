@@ -7824,6 +7824,7 @@ export interface components {
             repoPath: string;
         };
         HarnessDefault: {
+            defaultModel?: string;
             disabledModels?: string[];
             hidden?: boolean;
         };
@@ -10024,6 +10025,7 @@ export interface components {
             enabled: null | boolean;
         };
         UpdateHarnessDefaultRequest: {
+            defaultModel?: null | string;
             disabledModels?: null | string[];
             hidden?: null | boolean;
         };

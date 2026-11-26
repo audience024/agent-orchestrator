@@ -135,4 +135,31 @@ func TestPatchHarnessDefaultMergesAndResets(t *testing.T) {
 	if _, saved := store.defaults[string(domain.HarnessCodex)]; saved {
 		t.Fatalf("fully cleared entry should be removed, got %+v", store.defaults)
 	}
+
+	// DefaultModel trims, validates, merges without clobbering, and clears on empty string.
+	for _, bad := range []string{strings.Repeat("a", 257), "bad\nmodel"} {
+		if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{DefaultModel: &bad}); !errors.Is(err, ErrInvalidHarnessDefault) {
+			t.Fatalf("invalid defaultModel %q: %v", bad, err)
+		}
+	}
+	dm := " gpt-6.2-astra "
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{DefaultModel: &dm}); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.DefaultModelForHarness(ctx, domain.HarnessCodex); got != "gpt-6.2-astra" {
+		t.Fatalf("DefaultModelForHarness = %q, want gpt-6.2-astra", got)
+	}
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{Hidden: new(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := harnessDefault(t, svc, domain.HarnessCodex); !reflect.DeepEqual(got, domain.HarnessDefault{DefaultModel: "gpt-6.2-astra", Hidden: true}) {
+		t.Fatalf("after hide with defaultModel = %+v", got)
+	}
+	clearModel := ""
+	if _, err := svc.PatchHarnessDefault(ctx, domain.HarnessCodex, HarnessDefaultPatch{DefaultModel: &clearModel, Hidden: new(false)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, saved := store.defaults[string(domain.HarnessCodex)]; saved {
+		t.Fatalf("clearing defaultModel and hidden should remove entry, got %+v", store.defaults)
+	}
 }

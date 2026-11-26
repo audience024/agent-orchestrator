@@ -5597,5 +5597,9 @@
 	"settings.harness.showInPickers": "Afficher dans les sélecteurs",
 	"settings.harness.toggleVisibility": "Afficher {{agent}} dans les sélecteurs d'agents et de modèles",
 	"settings.harness.hiddenBadge": "Masqué",
-	"settings.harness.models.harnessHiddenHint": "{{agent}} est masqué des sélecteurs. Les sessions existantes ne sont pas affectées."
+	"settings.harness.models.harnessHiddenHint": "{{agent}} est masqué des sélecteurs. Les sessions existantes ne sont pas affectées.",
+	"settings.harness.models.setDefault": "Par défaut",
+	"settings.harness.models.setDefaultAria": "Définir {{model}} par défaut",
+	"settings.harness.models.resetDefault": "Réinitialiser",
+	"settings.harness.models.resetDefaultAria": "Réinitialiser le modèle par défaut de {{agent}}"
 }

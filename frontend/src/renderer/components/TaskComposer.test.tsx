@@ -5046,4 +5046,62 @@ describe("Hidden harness preferences", () => {
 		await waitFor(() => expect(task.agentChoices.map((choice) => choice.id)).toContain("claude-code"));
 		expect(task.agent.value).toBe("claude-code");
 	});
+
+	it("prefers project model over harness default model, and harness default model over remembered/last-used models", async () => {
+		h.agentCatalog = { agents: [agentReadiness("codex", "Codex")] };
+		h.post.mockResolvedValue({ data: {} });
+		window.localStorage.setItem("ao.taskComposer.preferences.v1", JSON.stringify({
+			"local:proj-1": { lastAgent: "codex", agents: { codex: { model: "gpt-remembered" } } },
+			"local:proj-2": { lastAgent: "codex", agents: { codex: { model: "gpt-remembered" } } },
+		}));
+		h.get.mockImplementation(async (path: string, options?: { params?: { path?: { id?: string } } }) => {
+			if (path === "/api/v1/settings") {
+				return {
+					data: {
+						defaultSessionMode: "chat",
+						chatHarnesses: ["codex"],
+						harnessDefaults: { codex: { defaultModel: "gpt-harness-default" } },
+					},
+				};
+			}
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "catalog",
+						models: [
+							{ id: "gpt-native", label: "GPT Native", isDefault: true, efforts: [] },
+							{ id: "gpt-harness-default", label: "GPT Harness Default", efforts: [] },
+							{ id: "gpt-remembered", label: "GPT Remembered", lastUsedAt: "2026-11-26T00:00:00Z", efforts: [] },
+							{ id: "gpt-project", label: "GPT Project", efforts: [] },
+						],
+					},
+				};
+			}
+			const id = options?.params?.path?.id ?? "proj-1";
+			return {
+				data: {
+					status: "ok",
+					project: id === "proj-2"
+						? { id: "proj-2", agent: "codex", config: { worker: { agent: "codex", agentConfig: { model: "gpt-project" } } } }
+						: { id: "proj-1", agent: "codex", config: { worker: { agent: "codex" } } },
+				},
+			};
+		});
+
+		// Without project model: harness default wins over remembered and CLI native default.
+		let task1!: ReturnType<typeof useTaskLaunch>;
+		function Launcher1() { task1 = useTaskLaunch({ projectId: "proj-1" }); return null; }
+		const r1 = render(<Wrap><Launcher1 /></Wrap>);
+		await waitFor(() => expect(task1.model.value).toBe("gpt-harness-default"));
+		expect(task1.chatModels.find((m) => m.id === "gpt-harness-default")?.default).toBe(true);
+		expect(task1.chatModels.find((m) => m.id === "gpt-native")?.default).toBe(false);
+		r1.unmount();
+
+		// With project model: project config wins over harness default and remembered.
+		let task2!: ReturnType<typeof useTaskLaunch>;
+		function Launcher2() { task2 = useTaskLaunch({ projectId: "proj-2" }); return null; }
+		render(<Wrap><Launcher2 /></Wrap>);
+		await waitFor(() => expect(task2.model.value).toBe("gpt-project"));
+	});
 });

@@ -22596,6 +22596,8 @@ components:
       type: object
     HarnessDefault:
       properties:
+        defaultModel:
+          type: string
         disabledModels:
           items:
             type: string
@@ -28253,6 +28255,10 @@ components:
       type: object
     UpdateHarnessDefaultRequest:
       properties:
+        defaultModel:
+          type:
+          - "null"
+          - string
         disabledModels:
           items:
             type: string

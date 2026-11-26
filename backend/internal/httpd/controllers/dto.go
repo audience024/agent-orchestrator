@@ -4564,6 +4564,9 @@ type UpdateHarnessDefaultRequest struct {
 	// DisabledModels lists the model ids (each up to 256 characters) clients
 	// should leave out of their pickers. An empty list offers every catalog model.
 	DisabledModels *[]string `json:"disabledModels,omitempty" maxItems:"20000"`
+	// DefaultModel names the model id (up to 256 characters) preferred by
+	// default for this harness. An empty string restores the harness CLI's native default.
+	DefaultModel *string `json:"defaultModel,omitempty"`
 	// Hidden leaves this harness out of agent and model pickers without
 	// affecting existing sessions.
 	Hidden *bool `json:"hidden,omitempty"`

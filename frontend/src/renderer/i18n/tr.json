@@ -5407,5 +5407,9 @@
 	"settings.harness.showInPickers": "Seçicilerde göster",
 	"settings.harness.toggleVisibility": "{{agent}} ajanını ajan ve model seçicilerde göster",
 	"settings.harness.hiddenBadge": "Gizli",
-	"settings.harness.models.harnessHiddenHint": "{{agent}} seçicilerden gizlendi. Mevcut oturumlar etkilenmez."
+	"settings.harness.models.harnessHiddenHint": "{{agent}} seçicilerden gizlendi. Mevcut oturumlar etkilenmez.",
+	"settings.harness.models.setDefault": "Varsayılan yap",
+	"settings.harness.models.setDefaultAria": "{{model}} modelini varsayılan yap",
+	"settings.harness.models.resetDefault": "Varsayılana dön",
+	"settings.harness.models.resetDefaultAria": "{{agent}} için varsayılan modeli sıfırla"
 }

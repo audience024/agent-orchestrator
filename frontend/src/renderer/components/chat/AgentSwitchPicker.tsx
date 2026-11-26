@@ -344,6 +344,8 @@ export function AgentModelPicker({
 	// No saved model means the agent's own default, which Claude Code leaves unset.
 	const savedCatalog = useQuery({ ...catalogOptions(currentHarness), enabled: Boolean(loadingModels) }).data;
 	// Until the agent reports its own models, its list fills the menu; picks wait for the agent.
+	const configuredDefaultModel = (harness: string) =>
+		isCloudPicker ? undefined : hostSettings?.harnessDefaults?.[harness]?.defaultModel?.trim() || undefined;
 	const starting = loadingModels && savedCatalog && !current.models.some((model) => model.id)
 		? otherAgentSource(
 			currentHarness,
@@ -351,6 +353,7 @@ export function AgentModelPicker({
 			savedModel ? { harness: currentHarness, model: savedModel } : undefined,
 			() => {},
 			t,
+			configuredDefaultModel(currentHarness),
 		)
 		: undefined;
 	const currentSource: PickerSource = disabled || starting
@@ -375,6 +378,7 @@ export function AgentModelPicker({
 			[held?.model],
 		),
 		held, onPendingChange, t,
+		configuredDefaultModel(harness),
 	);
 	// The rows below always describe who answers next: the pending agent, or the running one.
 	const shownHarness = pending?.harness ?? currentHarness;
@@ -908,14 +912,19 @@ function otherAgentSource(
 	pending: PendingAgentSwitch | undefined,
 	onPick: (next: PendingAgentSwitch) => void,
 	t: TFunction,
+	configuredDefaultModel?: string,
 ): PickerSource {
-	const listed = (catalog ?? [])
-		.filter((model) => !/^\[|\s/.test(model.id))
+	const rawListed = (catalog ?? []).filter((model) => !/^\[|\s/.test(model.id));
+	const effectiveDefaultId = configuredDefaultModel
+		&& rawListed.some((model) => model.id === configuredDefaultModel && !model.unavailableReason)
+		? configuredDefaultModel
+		: rawListed.find((model) => model.isDefault)?.id;
+	const listed = rawListed
 		.map((model) => ({
 			id: model.id,
 			label: readableModelLabel(agentModelDisplayLabel(harness, model.label)),
 			group: modelGroupLabel(model.provider, harness),
-			hint: model.isDefault ? "default" : undefined,
+			hint: model.id === effectiveDefaultId ? "default" : undefined,
 			unavailableReason: model.unavailableReason,
 		}));
 	// Two routes to one model read the same once shortened; their router tells them apart.
@@ -931,7 +940,9 @@ function otherAgentSource(
 	}
 	const chosen = pending ? pending.model ?? "" : undefined;
 	// Effort levels belong to a model. With none picked they are the default's.
-	const effortSource = catalog?.find((model) => (chosen ? model.id === chosen : model.isDefault)) ?? catalog?.[0];
+	const effortSource = catalog?.find((model) => (chosen ? model.id === chosen : model.id === effectiveDefaultId))
+		?? catalog?.find((model) => model.isDefault)
+		?? catalog?.[0];
 	const defaultEffort = effortSource?.defaultEffort;
 	const offersFast = Boolean(effortSource?.supportsFast);
 	const fastOn = offersFast && Boolean(pending?.fastMode);

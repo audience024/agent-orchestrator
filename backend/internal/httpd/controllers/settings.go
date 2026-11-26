@@ -236,13 +236,14 @@ func (c *SettingsController) setHarnessDefault(w http.ResponseWriter, r *http.Re
 	if !decodeConversationBody(w, r, &req) {
 		return
 	}
-	if req.DisabledModels == nil && req.Hidden == nil {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "HARNESS_DEFAULT_INVALID", "at least one of disabledModels or hidden is required", nil)
+	if req.DisabledModels == nil && req.DefaultModel == nil && req.Hidden == nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "HARNESS_DEFAULT_INVALID", "at least one of disabledModels, defaultModel, or hidden is required", nil)
 		return
 	}
 	agent := domain.AgentHarness(chi.URLParam(r, "agent"))
 	snapshot, err := c.Svc.PatchHarnessDefault(r.Context(), agent, settingssvc.HarnessDefaultPatch{
 		DisabledModels: req.DisabledModels,
+		DefaultModel:   req.DefaultModel,
 		Hidden:         req.Hidden,
 	})
 	if errors.Is(err, settingssvc.ErrUnknownHarness) {

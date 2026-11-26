@@ -31,6 +31,9 @@ func (s *harnessDefaultSettingsService) PatchHarnessDefault(_ context.Context, a
 	if patch.DisabledModels != nil {
 		next.DisabledModels = *patch.DisabledModels
 	}
+	if patch.DefaultModel != nil {
+		next.DefaultModel = *patch.DefaultModel
+	}
 	if patch.Hidden != nil {
 		next.Hidden = *patch.Hidden
 	}
@@ -83,5 +86,21 @@ func TestSettingsHarnessDefaultPatchSupportsPartialUpdates(t *testing.T) {
 	want = domain.HarnessDefault{DisabledModels: []string{"gpt-5"}, Hidden: false}
 	if got := svc.defaults["codex"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("after both fields = %+v", got)
+	}
+	// Only defaultModel: preserves disabledModels.
+	if code := patch("codex", `{"defaultModel":"gpt-6.2-astra"}`); code != http.StatusOK {
+		t.Fatalf("defaultModel status=%d", code)
+	}
+	want = domain.HarnessDefault{DisabledModels: []string{"gpt-5"}, DefaultModel: "gpt-6.2-astra"}
+	if got := svc.defaults["codex"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after defaultModel = %+v", got)
+	}
+	// Clearing defaultModel restores native default without clobbering disabledModels.
+	if code := patch("codex", `{"defaultModel":""}`); code != http.StatusOK {
+		t.Fatalf("clear defaultModel status=%d", code)
+	}
+	want = domain.HarnessDefault{DisabledModels: []string{"gpt-5"}}
+	if got := svc.defaults["codex"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after clear defaultModel = %+v", got)
 	}
 }

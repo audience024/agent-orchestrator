@@ -14,7 +14,7 @@ const readiness = vi.hoisted(() => ({ agents: [] as unknown[] }));
 const mockSettings = vi.hoisted(() => ({
 	value: undefined as {
 		chatHarnesses?: string[];
-		harnessDefaults?: Record<string, { disabledModels?: string[]; hidden?: boolean }>;
+		harnessDefaults?: Record<string, { disabledModels?: string[]; defaultModel?: string; hidden?: boolean }>;
 	} | undefined,
 }));
 vi.mock("../../lib/host-clients", () => ({ clientForSessionHost: () => ({ GET: unavailableGet }) }));
@@ -670,5 +670,13 @@ describe("AgentModelPicker", () => {
 		expect(rail.queryByRole("radio", { name: "OpenCode 2" })).not.toBeInTheDocument();
 		expect(rail.queryByRole("radio", { name: "Droid" })).not.toBeInTheDocument();
 		expect(rail.queryByRole("radio", { name: "Pi" })).not.toBeInTheDocument();
+	});
+
+	it("marks a harness's configured defaultModel as default when switching to it", async () => {
+		const user = userEvent.setup();
+		mockSettings.value = { harnessDefaults: { codex: { defaultModel: "gpt-x" } } };
+		open({ harness: "codex" }, false, "claude-code");
+		await user.click(screen.getByRole("button", { name: /Agent, model and reasoning effort/ }));
+		expect(await screen.findByRole("menuitemradio", { name: /GPT X.*Default/ })).toBeInTheDocument();
 	});
 });

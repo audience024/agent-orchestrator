@@ -12,8 +12,8 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { clientForHost } from "../lib/host-clients";
 import type { SessionMode } from "../types/workspace";
 
-/** `disabledModels` lists the models pickers leave out; `hidden` leaves the harness itself out of pickers. */
-export type HarnessDefault = Pick<components["schemas"]["HarnessDefault"], "disabledModels" | "hidden">;
+/** `disabledModels` lists models pickers leave out; `defaultModel` sets the preferred model; `hidden` hides the harness from pickers. */
+export type HarnessDefault = Pick<components["schemas"]["HarnessDefault"], "disabledModels" | "defaultModel" | "hidden">;
 
 export const settingsQueryKey = ["settings"] as const;
 
@@ -157,9 +157,10 @@ export function useUpdateHarnessDefault(hostId?: string) {
 	const queryClient = useQueryClient();
 	const key = hostId ? ["settings", hostId] : settingsQueryKey;
 	const mutation = useMutation({
-		mutationFn: async ({ agentId, disabledModels, hidden }: { agentId: string; disabledModels?: string[]; hidden?: boolean }) => {
+		mutationFn: async ({ agentId, disabledModels, defaultModel, hidden }: { agentId: string; disabledModels?: string[]; defaultModel?: string; hidden?: boolean }) => {
 			const body: components["schemas"]["UpdateHarnessDefaultRequest"] = {
 				...(disabledModels !== undefined ? { disabledModels } : {}),
+				...(defaultModel !== undefined ? { defaultModel } : {}),
 				...(hidden !== undefined ? { hidden } : {}),
 			};
 			const { data, error } = await (hostId ? clientForHost(hostId) : apiClient).PATCH("/api/v1/settings/harness-defaults/{agent}", {

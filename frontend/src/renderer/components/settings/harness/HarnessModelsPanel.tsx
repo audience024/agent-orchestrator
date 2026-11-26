@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Search } from "@/components/app-icons";
+import { ChevronLeft, ChevronRight, Search, Star } from "@/components/app-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { agentModelsQueryOptions } from "../../../hooks/useAgentModelsQuery";
@@ -12,6 +12,7 @@ import { collapseModelVariants, listsModelVariants } from "../../../lib/model-va
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
 import { Switch } from "../../ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../ui/tooltip";
 import { SettingsOptionMenu } from "../SettingsOptionMenu";
 import { HARNESS_CARD_CLASS, HARNESS_CARD_ROW_CLASS, HarnessStatusDot } from "./harness-ui";
 
@@ -52,9 +53,11 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 	const { update: updateHarnessDefault, error: disabledModelsError } = useUpdateHarnessDefault(hostId);
 	// The list being saved shows at once; the saved settings replace it once no save is left waiting.
 	const [disabledDraft, setDisabledDraft] = useState<{ scope: string; ids: string[] }>();
+	const [defaultModelDraft, setDefaultModelDraft] = useState<{ scope: string; id: string }>();
 	const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
 	const queuedSaves = useRef(0);
 	const savedDisabledIds = disabledDraft?.scope === scope ? disabledDraft.ids : settings?.harnessDefaults?.[agentId]?.disabledModels ?? [];
+	const savedDefaultModel = defaultModelDraft?.scope === scope ? defaultModelDraft.id : settings?.harnessDefaults?.[agentId]?.defaultModel?.trim() ?? "";
 	const allModelIds = useMemo(() => (allModels ?? []).map((model) => model.id).filter(isConcreteModelID), [allModels]);
 	// A list that switches off every catalog model filters nothing, like the pickers.
 	const savedDisabledSet = new Set(savedDisabledIds);
@@ -63,6 +66,22 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 	const disabledSet = allDisabled ? new Set<string>() : savedDisabledSet;
 	const isModelEnabled = (id: string) => !disabledSet.has(id);
 	const enabledCount = allModelIds.filter(isModelEnabled).length;
+	const enqueueSave = (payload: { disabledModels?: string[]; defaultModel?: string }) => {
+		if (payload.disabledModels !== undefined) setDisabledDraft({ scope, ids: payload.disabledModels });
+		if (payload.defaultModel !== undefined) setDefaultModelDraft({ scope, id: payload.defaultModel });
+		queuedSaves.current += 1;
+		// One request at a time, in click order, so an older update never lands last.
+		saveQueue.current = saveQueue.current
+			.then(() => updateHarnessDefault({ agentId, ...payload }))
+			.catch(() => undefined)
+			.finally(() => {
+				queuedSaves.current -= 1;
+				if (queuedSaves.current === 0) {
+					setDisabledDraft(undefined);
+					setDefaultModelDraft(undefined);
+				}
+			});
+	};
 	// `keepOn` stays switched on, so Disable all leaves the pickers one model.
 	const setModelsEnabled = (ids: string[], on: boolean, keepOn?: string) => {
 		// Ids the catalog no longer lists stay saved in case it lists them again.
@@ -74,18 +93,21 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 		// Pickers need a model, so keep at least one on.
 		if (allModelIds.every((id) => next.has(id))) return;
 		const saved = [...next];
-		setDisabledDraft({ scope, ids: saved });
-		queuedSaves.current += 1;
-		// One request at a time, in click order, so an older list never lands last.
-		saveQueue.current = saveQueue.current
-			.then(() => updateHarnessDefault({ agentId, disabledModels: saved }))
-			.catch(() => undefined)
-			.finally(() => {
-				queuedSaves.current -= 1;
-				if (queuedSaves.current === 0) setDisabledDraft(undefined);
-			});
+		// Disabling the configured custom default restores the CLI native default.
+		const clearsDefault = !on && savedDefaultModel !== "" && next.has(savedDefaultModel);
+		enqueueSave({ disabledModels: saved, ...(clearsDefault ? { defaultModel: "" } : {}) });
 	};
-	const initialModel = allModels?.find((model) => model.isDefault);
+	const setDefaultModel = (nextModelId: string, enableIds?: string[]) => {
+		const needsEnable = nextModelId !== "" && enableIds && enableIds.some((id) => disabledSet.has(id));
+		if (needsEnable) {
+			const nextDisabled = disabledIds.filter((id) => !enableIds.includes(id));
+			enqueueSave({ defaultModel: nextModelId, disabledModels: nextDisabled });
+			return;
+		}
+		enqueueSave({ defaultModel: nextModelId });
+	};
+	const initialModel = (savedDefaultModel ? allModels?.find((model) => model.id === savedDefaultModel) : undefined)
+		?? allModels?.find((model) => model.isDefault);
 	const initialProviderID = initialModel ? initialModel.provider?.trim() ?? "" : undefined;
 	const initialProvider = providers.find((provider) => provider.id === initialProviderID) ?? providers[0];
 	const selectedProvider = (providerChoice?.scope === scope ? providers.find((provider) => provider.id === providerChoice.id) : undefined) ?? initialProvider;
@@ -112,7 +134,10 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 	// Cursor lists one id per model setting; each model shows once and switches all its variants.
 	const families = listsModelVariants(agentId) ? collapseModelVariants(catalogModels.filter((model) => isConcreteModelID(model.id))) : undefined;
 	const familyIds = new Map(families?.map((family) => [family.id, family.variants.map((variant) => variant.id)]));
+	const familyDefaultIds = new Map(families?.map((family) => [family.id, family.defaultVariant.id]));
 	const idsOf = (id: string) => familyIds.get(id) ?? [id];
+	const defaultTargetIdOf = (id: string) => familyDefaultIds.get(id) ?? id;
+	const isCustomDefaultRow = (id: string) => savedDefaultModel !== "" && idsOf(id).includes(savedDefaultModel);
 	const providerModels = families
 		? families.map((family) => ({ ...catalogModels.find((model) => model.id === family.defaultVariant.id)!, id: family.id, label: family.label, efforts: family.efforts }))
 		: claude ? [...claude.current, ...claude.other] : catalogModels;
@@ -125,13 +150,15 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 	const bulkModelIds = normalizedModelSearch ? switchableModels.flatMap((model) => idsOf(model.id)) : allModelIds;
 	const bulkModelIdSet = new Set(bulkModelIds);
 	// Pickers need at least one model, so Disable all keeps one on when nothing it leaves
-	// alone is: the one already on in view, else the default.
+	// alone is: the custom default or CLI default in view, else the one already on in view.
+	const isRowDefault = (model: (typeof switchableModels)[number]) =>
+		savedDefaultModel !== "" ? isCustomDefaultRow(model.id) : Boolean(model.isDefault);
 	const keptOnDisable = allModelIds.some((id) => isModelEnabled(id) && !bulkModelIdSet.has(id))
 		? undefined
-		: (switchableModels.find((model) => model.isDefault && isModelEnabled(model.id))
-			?? switchableModels.find((model) => isModelEnabled(model.id))
-			?? switchableModels.find((model) => model.isDefault) ?? switchableModels[0])?.id;
-	const keptOnId = keptOnDisable && idsOf(keptOnDisable)[0];
+		: (switchableModels.find((model) => isRowDefault(model) && idsOf(model.id).some(isModelEnabled))
+			?? switchableModels.find((model) => idsOf(model.id).some(isModelEnabled))
+			?? switchableModels.find((model) => isRowDefault(model)) ?? switchableModels[0])?.id;
+	const keptOnId = keptOnDisable && (isCustomDefaultRow(keptOnDisable) ? savedDefaultModel : idsOf(keptOnDisable)[0]);
 	const pageCount = Math.max(1, Math.ceil(models.length / MODELS_PAGE_SIZE));
 	const currentPage = Math.min(page, pageCount - 1);
 	const pageStart = currentPage * MODELS_PAGE_SIZE;
@@ -175,13 +202,18 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 			{allModelIds.length ? <span className="text-xs tabular-nums text-settings-muted">{t("settings.harness.models.enabledSummary", families
 				? { enabled: families.filter((family) => idsOf(family.id).some(isModelEnabled)).length, total: families.length }
 				: { enabled: enabledCount, total: allModelIds.length })}</span> : null}
-			{bulkModelIds.length > 1 ? <span className="ml-auto flex items-center gap-1">
-				<Button type="button" size="xs" variant="ghost"
-					disabled={bulkModelIds.every(isModelEnabled)}
-					onClick={() => setModelsEnabled(bulkModelIds, true)}>{t("settings.harness.models.enableAll")}</Button>
-				<Button type="button" size="xs" variant="ghost"
-					disabled={!bulkModelIds.some((id) => id !== keptOnId && isModelEnabled(id))}
-					onClick={() => setModelsEnabled(bulkModelIds, false, keptOnId)}>{t("settings.harness.models.disableAll")}</Button>
+			{bulkModelIds.length > 1 || savedDefaultModel !== "" ? <span className="ml-auto flex items-center gap-1">
+				{savedDefaultModel !== "" ? <Button type="button" size="xs" variant="ghost"
+					aria-label={t("settings.harness.models.resetDefaultAria", { agent })}
+					onClick={() => setDefaultModel("")}>{t("settings.harness.models.resetDefault")}</Button> : null}
+				{bulkModelIds.length > 1 ? <>
+					<Button type="button" size="xs" variant="ghost"
+						disabled={bulkModelIds.every(isModelEnabled)}
+						onClick={() => setModelsEnabled(bulkModelIds, true)}>{t("settings.harness.models.enableAll")}</Button>
+					<Button type="button" size="xs" variant="ghost"
+						disabled={!bulkModelIds.some((id) => id !== keptOnId && isModelEnabled(id))}
+						onClick={() => setModelsEnabled(bulkModelIds, false, keptOnId)}>{t("settings.harness.models.disableAll")}</Button>
+				</> : null}
 			</span> : null}
 		</div>
 		{disabledModelsError ? <p role="alert" className="text-xs text-error">{disabledModelsError}</p> : null}
@@ -194,29 +226,66 @@ export function HarnessModelsPanel({ agentId, hostId, installed, needsLogin, onO
 		{error ? <p role="alert" className="text-xs text-error">{error}</p> : null}
 		{catalog.isPending ? null
 			: !models.length ? <p className="px-3 py-6 text-center text-sm text-settings-muted">{t(normalizedModelSearch ? "settings.options.noMatches" : acceptsDirectModel ? "settings.harness.models.directEntry" : "settings.harness.models.empty", { agent })}</p>
-			: <ul className={cn(HARNESS_CARD_CLASS, "settings-thin-scrollbar min-h-0 flex-initial overflow-y-auto overscroll-contain")} tabIndex={0} aria-label={t("settings.harness.models.title")}>
-				{visibleModels.map((model) => <li key={model.id} className={cn(HARNESS_CARD_ROW_CLASS, "shrink-0 gap-4")}>
-					<span className="min-w-0 flex-1">
-						<span className="flex flex-wrap items-center gap-2 text-sm leading-5 text-settings-label">
-							{agentModelDisplayLabel(agentId, model.label)}
-							{model.isDefault ? <span className="rounded-sm bg-(--color-bg-settings-input) px-1.5 py-0.5 text-caption text-settings-muted">{t("settings.harness.models.default")}</span> : null}
+			: <TooltipProvider delayDuration={300}>
+				<ul className={cn(HARNESS_CARD_CLASS, "settings-thin-scrollbar min-h-0 flex-initial overflow-y-auto overscroll-contain")} tabIndex={0} aria-label={t("settings.harness.models.title")}>
+				{visibleModels.map((model) => {
+					const displayName = agentModelDisplayLabel(agentId, model.label);
+					const concrete = isConcreteModelID(model.id);
+					const customDefault = concrete && isCustomDefaultRow(model.id);
+					const effectiveDefault = savedDefaultModel !== "" ? customDefault : Boolean(model.isDefault);
+					const defaultActionLabel = customDefault
+						? t("settings.harness.models.resetDefaultAria", { agent })
+						: t("settings.harness.models.setDefaultAria", { model: displayName });
+					const defaultActionTip = customDefault
+						? t("settings.harness.models.resetDefault")
+						: t("settings.harness.models.setDefault");
+					return <li key={model.id} className={cn(HARNESS_CARD_ROW_CLASS, "group/model-row shrink-0 gap-3")}>
+						<span className="min-w-0 flex-1">
+							<span className="flex flex-wrap items-center gap-2 text-sm leading-5 text-settings-label">
+								{displayName}
+								{effectiveDefault ? <span className={cn("rounded-sm px-1.5 py-0.5 text-caption", customDefault ? "bg-accent/15 font-medium text-settings-accent" : "bg-(--color-bg-settings-input) text-settings-muted")}>{t("settings.harness.models.default")}</span> : null}
+							</span>
+							{/* Only facts the harness reports; nothing is shown in place of a missing value. */}
+							{model.contextWindow ? <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-settings-muted">
+								{model.contextWindow ? <span>{t("settings.harness.models.context")}: {new Intl.NumberFormat(i18n.resolvedLanguage).format(model.contextWindow)}</span> : null}
+							</span> : null}
 						</span>
-						{/* Only facts the harness reports; nothing is shown in place of a missing value. */}
-						{model.contextWindow ? <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-settings-muted">
-							{model.contextWindow ? <span>{t("settings.harness.models.context")}: {new Intl.NumberFormat(i18n.resolvedLanguage).format(model.contextWindow)}</span> : null}
+						{model.efforts?.length ? <span className="shrink-0 text-right text-xs text-settings-muted">
+							{t("settings.harness.models.efforts", { levels: model.efforts.join(" · ") })}
 						</span> : null}
-					</span>
-					{model.efforts?.length ? <span className="shrink-0 text-right text-xs text-settings-muted">
-						{t("settings.harness.models.efforts", { levels: model.efforts.join(" · ") })}
-					</span> : null}
-					{isConcreteModelID(model.id) ? <Switch
-						aria-label={t("settings.harness.models.toggleModel", { model: agentModelDisplayLabel(agentId, model.label) })}
-						checked={idsOf(model.id).some(isModelEnabled)}
-						disabled={idsOf(model.id).some(isModelEnabled) && enabledCount <= idsOf(model.id).filter(isModelEnabled).length}
-						onCheckedChange={(on) => setModelsEnabled(idsOf(model.id), on)}
-					/> : null}
-				</li>)}
-			</ul>}
+						{concrete && (customDefault || !effectiveDefault) ? (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										size="icon-xs"
+										variant="ghost"
+										aria-label={defaultActionLabel}
+										title={defaultActionTip}
+										className={cn(
+											"shrink-0",
+											customDefault
+												? "text-settings-accent"
+												: "text-settings-muted opacity-50 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/model-row:opacity-100",
+										)}
+										onClick={() => customDefault ? setDefaultModel("") : setDefaultModel(defaultTargetIdOf(model.id), idsOf(model.id))}
+									>
+										<Star aria-hidden="true" className={cn("size-3.5", customDefault && "fill-current")} />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent side="top" sideOffset={4} hideArrow>{defaultActionTip}</TooltipContent>
+							</Tooltip>
+						) : null}
+						{concrete ? <Switch
+							aria-label={t("settings.harness.models.toggleModel", { model: displayName })}
+							checked={idsOf(model.id).some(isModelEnabled)}
+							disabled={idsOf(model.id).some(isModelEnabled) && enabledCount <= idsOf(model.id).filter(isModelEnabled).length}
+							onCheckedChange={(on) => setModelsEnabled(idsOf(model.id), on)}
+						/> : null}
+					</li>;
+				})}
+			</ul>
+			</TooltipProvider>}
 		{pageCount > 1 ? <nav className="flex shrink-0 items-center justify-end gap-2 text-xs text-settings-muted" aria-label={t("settings.harness.models.pagination")}>
 			<span className="tabular-nums">{t("settings.harness.models.pageRange", { start: pageStart + 1, end: pageStart + visibleModels.length, total: models.length })}</span>
 			<Button type="button" size="icon-sm" variant="ghost" aria-label={t("settings.harness.models.previousPage")} disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
